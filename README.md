@@ -11,6 +11,7 @@ This repository is currently at the initial scaffold stage. The implemented v0.1
 - repository structure from `docs/stock_research_copilot_codex_spec.pdf`
 - `yfinance` price history and company profile loader with ticker validation and optional raw CSV caching
 - moving averages, RSI, annualized volatility, and max drawdown calculations
+- yfinance financial statement loading plus revenue growth, margins, returns, leverage, and free cash flow metrics
 - focused unit tests for technical analysis behavior
 
 ## Price Loader
@@ -33,6 +34,24 @@ The technical analysis module lives in `src/analysis/technical_analysis.py` and 
 - `add_technical_indicators(price_data)`
 - `calculate_technical_metrics(price_data)` for dashboard/report summaries
 - `generate_technical_summary(price_data)` with disclaimer-safe wording
+
+## Financial Analysis
+
+The financial loader lives in `src/data_loader/financial_loader.py` and currently supports:
+
+- `get_financial_statements(ticker)`
+- `normalize_financials(raw)`
+- `get_ttm_metrics(ticker)`
+
+The financial ratios module lives in `src/analysis/financial_ratios.py` and currently supports:
+
+- `calculate_growth_rates(income_statement)`
+- `calculate_margins(income_statement, cash_flow)`
+- `calculate_free_cash_flow(cash_flow)`
+- `calculate_returns(income_statement, balance_sheet)`
+- `calculate_leverage(income_statement, balance_sheet)`
+- `calculate_financial_metrics(statements)`
+- `generate_financial_summary(metrics)`
 
 ## Quick Start
 
