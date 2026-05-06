@@ -12,7 +12,12 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.analysis.financial_ratios import calculate_financial_metrics, generate_financial_summary
 from src.analysis.technical_analysis import calculate_technical_metrics, generate_technical_summary
-from src.analysis.valuation import build_scenarios, blended_valuation, summarize_valuation
+from src.analysis.valuation import (
+    blended_valuation_with_dcf,
+    build_dcf_scenarios,
+    build_scenarios,
+    summarize_valuation,
+)
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements, get_ttm_metrics
 from src.data_loader.price_loader import get_company_profile, get_price_history
 from src.utils.formatting import format_value, humanize_label
@@ -157,6 +162,7 @@ def _build_default_valuation(
 
     base_eps = ttm.get("eps") or _fallback_eps(current_price)
     base_revenue = ttm.get("revenue")
+    base_free_cash_flow = ttm.get("free_cash_flow")
     shares_outstanding = _estimate_shares_outstanding(market_cap, current_price)
     assumptions = build_scenarios(
         base_forward_eps=base_eps,
@@ -165,7 +171,15 @@ def _build_default_valuation(
         base_ps_multiple=6.0 if base_revenue else None,
         shares_outstanding=shares_outstanding,
     )
-    valuation = blended_valuation(assumptions)
+    dcf_assumptions = build_dcf_scenarios(
+        base_free_cash_flow=base_free_cash_flow,
+        base_growth_rate=0.05,
+        discount_rate=0.10,
+        terminal_growth_rate=0.025,
+        net_debt=0.0,
+        shares_outstanding=shares_outstanding,
+    )
+    valuation = blended_valuation_with_dcf(assumptions, dcf_assumptions=dcf_assumptions)
     return valuation, summarize_valuation(valuation, current_price=current_price)
 
 

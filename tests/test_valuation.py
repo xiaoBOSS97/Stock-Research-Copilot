@@ -4,9 +4,13 @@ import pandas as pd
 import pytest
 
 from src.analysis.valuation import (
+    DcfAssumption,
     ScenarioAssumption,
     blended_valuation,
+    blended_valuation_with_dcf,
+    build_dcf_scenarios,
     build_scenarios,
+    estimate_by_dcf,
     estimate_by_pe,
     estimate_by_ps,
     summarize_valuation,
@@ -40,6 +44,29 @@ def test_ps_valuation_formula(assumptions: list[ScenarioAssumption]) -> None:
     assert base_row["method"] == "PS"
     assert base_row["target_price"] == pytest.approx(500.0)
     assert base_row["status"] == "ok"
+
+
+def test_dcf_valuation_formula() -> None:
+    dcf_assumptions = [
+        DcfAssumption(
+            scenario=scenario,
+            base_free_cash_flow=100.0,
+            growth_rate=0.0,
+            discount_rate=0.10,
+            terminal_growth_rate=0.02,
+            net_debt=0.0,
+            shares_outstanding=10.0,
+            projection_years=2,
+        )
+        for scenario in ["Bear", "Base", "Bull"]
+    ]
+
+    result = estimate_by_dcf(dcf_assumptions)
+    expected_terminal_value = 100 * 1.02 / (0.10 - 0.02)
+    expected_enterprise_value = 100 / 1.10 + 100 / (1.10**2) + expected_terminal_value / (1.10**2)
+
+    assert result.loc[1, "method"] == "DCF"
+    assert result.loc[1, "target_price"] == pytest.approx(expected_enterprise_value / 10)
 
 
 def test_scenario_order_bear_base_bull(assumptions: list[ScenarioAssumption]) -> None:
@@ -90,6 +117,72 @@ def test_blended_valuation_uses_available_method_when_one_is_missing() -> None:
 
     assert base_row["target_price"] == pytest.approx(200.0)
     assert base_row["status"] == "ok"
+
+
+def test_build_dcf_scenarios_order_and_values() -> None:
+    dcf_assumptions = build_dcf_scenarios(
+        base_free_cash_flow=100_000.0,
+        base_growth_rate=0.05,
+        discount_rate=0.10,
+        terminal_growth_rate=0.025,
+        net_debt=10_000.0,
+        shares_outstanding=1_000.0,
+    )
+
+    assert [assumption.scenario for assumption in dcf_assumptions] == ["Bear", "Base", "Bull"]
+    assert dcf_assumptions[0].growth_rate < dcf_assumptions[1].growth_rate < dcf_assumptions[2].growth_rate
+    assert dcf_assumptions[0].discount_rate > dcf_assumptions[1].discount_rate > dcf_assumptions[2].discount_rate
+
+
+def test_dcf_missing_inputs_return_insufficient_data() -> None:
+    dcf_assumptions = build_dcf_scenarios(
+        base_free_cash_flow=None,
+        discount_rate=0.10,
+        terminal_growth_rate=0.02,
+        shares_outstanding=1_000.0,
+    )
+
+    result = estimate_by_dcf(dcf_assumptions)
+
+    assert set(result["status"]) == {"insufficient_data"}
+    assert result["target_price"].isna().all()
+
+
+def test_dcf_requires_discount_rate_above_terminal_growth() -> None:
+    dcf_assumptions = build_dcf_scenarios(
+        base_free_cash_flow=100_000.0,
+        discount_rate=0.02,
+        terminal_growth_rate=0.03,
+        shares_outstanding=1_000.0,
+    )
+
+    result = estimate_by_dcf(dcf_assumptions)
+
+    assert result.loc[result["scenario"] == "Base", "status"].iloc[0] == "insufficient_data"
+
+
+def test_blended_valuation_with_dcf_combines_available_methods(
+    assumptions: list[ScenarioAssumption],
+) -> None:
+    dcf_assumptions = build_dcf_scenarios(
+        base_free_cash_flow=10_000.0,
+        discount_rate=0.10,
+        terminal_growth_rate=0.02,
+        shares_outstanding=1_000.0,
+        base_growth_rate=0.03,
+    )
+
+    result = blended_valuation_with_dcf(
+        assumptions,
+        dcf_assumptions=dcf_assumptions,
+        pe_weight=1.0,
+        ps_weight=0.0,
+        dcf_weight=0.0,
+    )
+    base_row = result[result["scenario"] == "Base"].iloc[0]
+
+    assert base_row["target_price"] == pytest.approx(200.0)
+    assert "dcf_target_price" in base_row["assumed_inputs"]
 
 
 def test_invalid_custom_scenario_order_raises() -> None:

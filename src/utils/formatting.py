@@ -20,6 +20,9 @@ PERCENT_METRICS = {
     "roe",
     "roa",
     "roic",
+    "growth_rate",
+    "discount_rate",
+    "terminal_growth_rate",
 }
 LARGE_CURRENCY_METRICS = {
     "marketCap",
@@ -28,8 +31,14 @@ LARGE_CURRENCY_METRICS = {
     "net_income",
     "free_cash_flow",
     "forward_revenue",
+    "base_free_cash_flow",
+    "net_debt",
+    "enterprise_value",
+    "equity_value",
+    "terminal_value",
     "pe_target_price",
     "ps_target_price",
+    "dcf_target_price",
 }
 PRICE_METRICS = {
     "latest_close",
@@ -42,6 +51,7 @@ PRICE_METRICS = {
     "eps",
     "pe_multiple",
     "ps_multiple",
+    "shares_outstanding",
 }
 LABEL_OVERRIDES = {
     "RSI": "RSI",
@@ -58,6 +68,18 @@ LABEL_OVERRIDES = {
     "ps_weight": "P/S Weight",
     "pe_target_price": "P/E Target Price",
     "ps_target_price": "P/S Target Price",
+    "dcf_weight": "DCF Weight",
+    "dcf_target_price": "DCF Target Price",
+    "base_free_cash_flow": "Base Free Cash Flow",
+    "growth_rate": "Growth Rate",
+    "discount_rate": "Discount Rate",
+    "terminal_growth_rate": "Terminal Growth Rate",
+    "net_debt": "Net Debt",
+    "shares_outstanding": "Shares Outstanding",
+    "projection_years": "Projection Years",
+    "enterprise_value": "Enterprise Value",
+    "equity_value": "Equity Value",
+    "terminal_value": "Terminal Value",
     "debt_to_equity": "Debt-to-Equity",
     "current_ratio": "Current Ratio",
     "interest_coverage": "Interest Coverage",

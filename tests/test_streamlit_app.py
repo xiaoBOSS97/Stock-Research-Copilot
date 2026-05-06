@@ -45,6 +45,26 @@ def test_build_valuation_table_returns_selected_method() -> None:
     assert table["scenario"].tolist() == ["Bear", "Base", "Bull"]
 
 
+def test_build_valuation_table_supports_dcf() -> None:
+    table = build_valuation_table(
+        method="DCF",
+        latest_close=100.0,
+        market_cap=1_000.0,
+        base_eps=5.0,
+        base_pe=20.0,
+        base_revenue_billions=10.0,
+        base_ps=2.0,
+        base_free_cash_flow_billions=1.0,
+        dcf_growth_rate=0.03,
+        dcf_discount_rate=0.10,
+        dcf_terminal_growth_rate=0.02,
+        net_debt_billions=0.0,
+    )
+
+    assert table["method"].unique().tolist() == ["DCF"]
+    assert table["status"].tolist() == ["ok", "ok", "ok"]
+
+
 def test_metrics_to_display_frame_humanizes_labels_and_values() -> None:
     frame = metrics_to_display_frame({"net_margin": 0.25, "free_cash_flow": 100_000_000_000})
 

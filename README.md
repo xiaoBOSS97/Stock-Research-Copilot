@@ -12,7 +12,7 @@ This repository is at a stable MVP stage. The implemented v0.1 foundation includ
 - `yfinance` price history and company profile loader with ticker validation and optional raw CSV caching
 - moving averages, RSI, annualized volatility, and max drawdown calculations
 - yfinance financial statement loading plus revenue growth, margins, returns, leverage, and free cash flow metrics
-- Bear/Base/Bull valuation scenarios using PE, P/S, and blended methods
+- Bear/Base/Bull valuation scenarios using P/E, P/S, DCF, and blended methods
 - Markdown equity research report generation
 - Streamlit dashboard for price trends, financial metrics, valuation scenarios, peers, and report preview
 - unit tests for loaders, analysis modules, valuation, reports, formatting, and dashboard helpers
@@ -61,10 +61,14 @@ The financial ratios module lives in `src/analysis/financial_ratios.py` and curr
 The valuation module lives in `src/analysis/valuation.py` and currently supports:
 
 - `ScenarioAssumption`
+- `DcfAssumption`
 - `build_scenarios(...)`
+- `build_dcf_scenarios(...)`
 - `estimate_by_pe(assumptions)`
 - `estimate_by_ps(assumptions)`
+- `estimate_by_dcf(assumptions)`
 - `blended_valuation(assumptions)`
+- `blended_valuation_with_dcf(assumptions, dcf_assumptions)`
 - `summarize_valuation(valuation_table, current_price=None)`
 
 Valuation outputs are scenario ranges based on explicit assumptions. They are for educational and research purposes only and are not investment advice.
@@ -121,7 +125,7 @@ The Streamlit dashboard lives in `src/app/streamlit_app.py` and includes:
 - close price with MA20, MA50, and MA200
 - technical and financial metric cards
 - revenue, net income, and free cash flow chart when statements are available
-- Bear/Base/Bull valuation table
+- Bear/Base/Bull valuation table with P/E, P/S, DCF, or blended methods
 - peer comparison table with technical metrics, market cap, revenue growth, and net margin where available
 - Markdown report preview, download, and save action
 
@@ -144,9 +148,9 @@ Network data may be incomplete, delayed, unavailable, or shaped differently acro
 
 - yfinance may return empty financial statements or temporary network errors.
 - Price data is cached to `data/raw` and financial statements are cached to `data/processed` when available.
-- P/E and P/S valuation assumptions are user-controlled scenario inputs, not predictions.
+- P/E, P/S, and DCF valuation assumptions are user-controlled scenario inputs, not predictions.
 - Peer comparison uses available public data and may show `N/A` when financial data is missing.
-- SEC EDGAR support, DCF valuation, richer peer selection, and PDF export are planned future extensions.
+- SEC EDGAR support, richer peer selection, and PDF export are planned future extensions.
 
 ## Disclaimer
 

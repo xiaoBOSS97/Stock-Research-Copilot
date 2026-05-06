@@ -19,7 +19,10 @@ from src.analysis.financial_ratios import calculate_financial_metrics, generate_
 from src.analysis.technical_analysis import add_technical_indicators, calculate_technical_metrics
 from src.analysis.valuation import (
     blended_valuation,
+    blended_valuation_with_dcf,
+    build_dcf_scenarios,
     build_scenarios,
+    estimate_by_dcf,
     estimate_by_pe,
     estimate_by_ps,
     summarize_valuation,
@@ -169,6 +172,11 @@ def build_valuation_table(
     base_pe: float,
     base_revenue_billions: float | None,
     base_ps: float | None,
+    base_free_cash_flow_billions: float | None = None,
+    dcf_growth_rate: float = 0.05,
+    dcf_discount_rate: float = 0.10,
+    dcf_terminal_growth_rate: float = 0.025,
+    net_debt_billions: float = 0.0,
 ) -> pd.DataFrame:
     """Build selected valuation scenario table."""
 
@@ -183,10 +191,24 @@ def build_valuation_table(
         base_ps_multiple=base_ps,
         shares_outstanding=shares_outstanding,
     )
+    dcf_assumptions = build_dcf_scenarios(
+        base_free_cash_flow=None
+        if base_free_cash_flow_billions is None
+        else base_free_cash_flow_billions * 1_000_000_000,
+        base_growth_rate=dcf_growth_rate,
+        discount_rate=dcf_discount_rate,
+        terminal_growth_rate=dcf_terminal_growth_rate,
+        net_debt=net_debt_billions * 1_000_000_000,
+        shares_outstanding=shares_outstanding,
+    )
     if method == "PE":
         return estimate_by_pe(assumptions)
     if method == "PS":
         return estimate_by_ps(assumptions)
+    if method == "DCF":
+        return estimate_by_dcf(dcf_assumptions)
+    if method == "blended + DCF":
+        return blended_valuation_with_dcf(assumptions, dcf_assumptions=dcf_assumptions)
     return blended_valuation(assumptions)
 
 
@@ -291,7 +313,7 @@ def main() -> None:
         interval = str(settings.get("default_interval", "1d"))
         default_peers = ", ".join(peers_config.get(ticker, []))
         peer_text = st.text_input("Peers", value=default_peers)
-        valuation_method = st.selectbox("Valuation", ["blended", "PE", "PS"])
+        valuation_method = st.selectbox("Valuation", ["blended", "blended + DCF", "PE", "PS", "DCF"])
         with st.expander("Scenario Assumptions"):
             base_eps = st.number_input("Forward EPS", min_value=0.0, value=10.0, step=0.1)
             base_pe = st.number_input("Base PE", min_value=0.0, value=22.0, step=0.5)
@@ -302,6 +324,17 @@ def main() -> None:
                 step=5.0,
             )
             base_ps = st.number_input("Base P/S", min_value=0.0, value=6.0, step=0.1)
+            base_fcf_billions = st.number_input("Base Free Cash Flow ($B)", min_value=0.0, value=100.0, step=5.0)
+            dcf_growth_rate = st.number_input("DCF Growth Rate", min_value=-0.50, max_value=0.50, value=0.05, step=0.005)
+            dcf_discount_rate = st.number_input("DCF Discount Rate", min_value=0.001, max_value=0.50, value=0.10, step=0.005)
+            dcf_terminal_growth_rate = st.number_input(
+                "DCF Terminal Growth",
+                min_value=0.0,
+                max_value=0.10,
+                value=0.025,
+                step=0.005,
+            )
+            net_debt_billions = st.number_input("Net Debt ($B)", value=0.0, step=5.0)
 
     price_data, price_warning = load_price_data(ticker, period, interval)
     profile, profile_warning = load_profile(ticker)
@@ -340,6 +373,11 @@ def main() -> None:
         base_pe=base_pe,
         base_revenue_billions=base_revenue_billions if base_revenue_billions > 0 else None,
         base_ps=base_ps if base_ps > 0 else None,
+        base_free_cash_flow_billions=base_fcf_billions if base_fcf_billions > 0 else None,
+        dcf_growth_rate=dcf_growth_rate,
+        dcf_discount_rate=dcf_discount_rate,
+        dcf_terminal_growth_rate=dcf_terminal_growth_rate,
+        net_debt_billions=net_debt_billions,
     )
     valuation_summary = summarize_valuation(
         valuation_table,
