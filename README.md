@@ -12,6 +12,7 @@ This repository is currently at the initial scaffold stage. The implemented v0.1
 - `yfinance` price history and company profile loader with ticker validation and optional raw CSV caching
 - moving averages, RSI, annualized volatility, and max drawdown calculations
 - yfinance financial statement loading plus revenue growth, margins, returns, leverage, and free cash flow metrics
+- Bear/Base/Bull valuation scenarios using PE, P/S, and blended methods
 - focused unit tests for technical analysis behavior
 
 ## Price Loader
@@ -52,6 +53,19 @@ The financial ratios module lives in `src/analysis/financial_ratios.py` and curr
 - `calculate_leverage(income_statement, balance_sheet)`
 - `calculate_financial_metrics(statements)`
 - `generate_financial_summary(metrics)`
+
+## Valuation
+
+The valuation module lives in `src/analysis/valuation.py` and currently supports:
+
+- `ScenarioAssumption`
+- `build_scenarios(...)`
+- `estimate_by_pe(assumptions)`
+- `estimate_by_ps(assumptions)`
+- `blended_valuation(assumptions)`
+- `summarize_valuation(valuation_table, current_price=None)`
+
+Valuation outputs are scenario ranges based on explicit assumptions. They are for educational and research purposes only and are not investment advice.
 
 ## Quick Start
 
