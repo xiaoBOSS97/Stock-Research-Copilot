@@ -13,6 +13,8 @@ This repository is currently at the initial scaffold stage. The implemented v0.1
 - moving averages, RSI, annualized volatility, and max drawdown calculations
 - yfinance financial statement loading plus revenue growth, margins, returns, leverage, and free cash flow metrics
 - Bear/Base/Bull valuation scenarios using PE, P/S, and blended methods
+- Markdown equity research report generation
+- Streamlit dashboard for price trends, financial metrics, valuation scenarios, peers, and report preview
 - focused unit tests for technical analysis behavior
 
 ## Price Loader
@@ -67,6 +69,23 @@ The valuation module lives in `src/analysis/valuation.py` and currently supports
 
 Valuation outputs are scenario ranges based on explicit assumptions. They are for educational and research purposes only and are not investment advice.
 
+## Report Generation
+
+The report generator lives in `src/report/report_generator.py` and currently supports:
+
+- `build_report_context(...)`
+- `render_markdown_report(context)`
+- `save_report(markdown, ticker)`
+- `generate_report_for_ticker(ticker)`
+
+Generate a Markdown report:
+
+```bash
+uv run python -m src.report.report_generator --ticker AAPL
+```
+
+The default output path is `data/reports/AAPL_report.md`.
+
 ## Quick Start
 
 ```bash
@@ -86,6 +105,24 @@ If you prefer an activated shell, `uv sync` creates `.venv`, so you can still ru
 source .venv/bin/activate
 pytest -q
 streamlit run src/app/streamlit_app.py
+```
+
+## Dashboard
+
+The Streamlit dashboard lives in `src/app/streamlit_app.py` and includes:
+
+- ticker, period, peer, valuation method, and scenario assumption controls
+- close price with MA20, MA50, and MA200
+- technical and financial metric cards
+- revenue, net income, and free cash flow chart when statements are available
+- Bear/Base/Bull valuation table
+- peer comparison table
+- Markdown report preview, download, and save action
+
+Run it with:
+
+```bash
+uv run streamlit run src/app/streamlit_app.py
 ```
 
 ## Data Sources
