@@ -45,6 +45,7 @@ def test_build_report_context_contains_required_sections() -> None:
         company_profile=sample_profile(),
         financial_metrics={"revenue_growth_yoy": 0.2, "net_margin": 0.25},
         valuation_table=sample_valuation_table(),
+        peer_comparison="| Ticker | Latest Close |\n| --- | --- |\n| MSFT | 100.00 |",
         generated_at=datetime(2026, 5, 6, tzinfo=UTC),
     )
 
@@ -53,6 +54,7 @@ def test_build_report_context_contains_required_sections() -> None:
     assert "Price data" in context["sources_and_disclaimer"]
     assert "does not provide financial advice" in context["sources_and_disclaimer"]
     assert "Bear" in context["scenario_table"]
+    assert "MSFT" in context["peer_comparison"]
 
 
 def test_render_markdown_report_includes_template_sections() -> None:
@@ -77,6 +79,15 @@ def test_save_report_writes_markdown_file(tmp_path) -> None:
     assert output_path.read_text(encoding="utf-8") == "# Test\n"
 
 
+def test_format_dataframe_markdown_renders_rows() -> None:
+    markdown = report_generator.format_dataframe_markdown(
+        pd.DataFrame([{"Ticker": "MSFT", "Latest Close": "100.00"}])
+    )
+
+    assert "| Ticker | Latest Close |" in markdown
+    assert "| MSFT | 100.00 |" in markdown
+
+
 def test_generate_report_for_ticker_saves_report_when_financials_are_unavailable(
     monkeypatch,
     tmp_path,
@@ -86,7 +97,7 @@ def test_generate_report_for_ticker_saves_report_when_financials_are_unavailable
     monkeypatch.setattr(
         report_generator,
         "get_financial_statements",
-        lambda ticker: (_ for _ in ()).throw(FinancialDataError("No statements")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(FinancialDataError("No statements")),
     )
     monkeypatch.setattr(
         report_generator,

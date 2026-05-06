@@ -5,8 +5,10 @@ import pandas as pd
 from src.app.streamlit_app import (
     build_valuation_table,
     format_optional_percent,
+    metrics_to_display_frame,
     parse_peer_input,
     statement_row,
+    valuation_to_display_frame,
 )
 
 
@@ -41,3 +43,29 @@ def test_build_valuation_table_returns_selected_method() -> None:
 
     assert table["method"].unique().tolist() == ["PE"]
     assert table["scenario"].tolist() == ["Bear", "Base", "Bull"]
+
+
+def test_metrics_to_display_frame_humanizes_labels_and_values() -> None:
+    frame = metrics_to_display_frame({"net_margin": 0.25, "free_cash_flow": 100_000_000_000})
+
+    assert frame.iloc[0]["Metric"] == "Net Margin"
+    assert frame.iloc[0]["Value"] == "25.0%"
+    assert frame.iloc[1]["Value"] == "100.00B"
+
+
+def test_valuation_to_display_frame_hides_raw_assumptions() -> None:
+    table = build_valuation_table(
+        method="PE",
+        latest_close=100.0,
+        market_cap=1_000.0,
+        base_eps=5.0,
+        base_pe=20.0,
+        base_revenue_billions=10.0,
+        base_ps=2.0,
+    )
+
+    display = valuation_to_display_frame(table)
+
+    assert "Assumed Inputs" not in display.columns
+    assert "Target Price" in display.columns
+    assert display.loc[1, "Target Price"] == "100.00"

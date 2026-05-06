@@ -6,7 +6,7 @@ Stock Research Copilot collects public market and financial data, computes techn
 
 ## Project Status
 
-This repository is currently at the initial scaffold stage. The implemented v0.1 foundation includes:
+This repository is at a stable MVP stage. The implemented v0.1 foundation includes:
 
 - repository structure from `docs/stock_research_copilot_codex_spec.pdf`
 - `yfinance` price history and company profile loader with ticker validation and optional raw CSV caching
@@ -15,7 +15,7 @@ This repository is currently at the initial scaffold stage. The implemented v0.1
 - Bear/Base/Bull valuation scenarios using PE, P/S, and blended methods
 - Markdown equity research report generation
 - Streamlit dashboard for price trends, financial metrics, valuation scenarios, peers, and report preview
-- focused unit tests for technical analysis behavior
+- unit tests for loaders, analysis modules, valuation, reports, formatting, and dashboard helpers
 
 ## Price Loader
 
@@ -93,10 +93,16 @@ uv sync
 uv run pytest -q
 ```
 
-Run the dashboard once the Streamlit app is implemented:
+Run the dashboard:
 
 ```bash
 uv run streamlit run src/app/streamlit_app.py
+```
+
+Generate a report:
+
+```bash
+uv run python -m src.report.report_generator --ticker AAPL
 ```
 
 If you prefer an activated shell, `uv sync` creates `.venv`, so you can still run:
@@ -116,7 +122,7 @@ The Streamlit dashboard lives in `src/app/streamlit_app.py` and includes:
 - technical and financial metric cards
 - revenue, net income, and free cash flow chart when statements are available
 - Bear/Base/Bull valuation table
-- peer comparison table
+- peer comparison table with technical metrics, market cap, revenue growth, and net margin where available
 - Markdown report preview, download, and save action
 
 Run it with:
@@ -133,6 +139,14 @@ The MVP is designed to run without paid APIs. It uses public data sources such a
 - SEC EDGAR APIs for future official filing and company facts support
 
 Network data may be incomplete, delayed, unavailable, or shaped differently across companies.
+
+## MVP Limitations
+
+- yfinance may return empty financial statements or temporary network errors.
+- Price data is cached to `data/raw` and financial statements are cached to `data/processed` when available.
+- P/E and P/S valuation assumptions are user-controlled scenario inputs, not predictions.
+- Peer comparison uses available public data and may show `N/A` when financial data is missing.
+- SEC EDGAR support, DCF valuation, richer peer selection, and PDF export are planned future extensions.
 
 ## Disclaimer
 

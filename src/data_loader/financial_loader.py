@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -26,11 +27,20 @@ def _clean_ticker(ticker: str) -> str:
     return cleaned
 
 
-def get_financial_statements(ticker: str) -> dict[str, pd.DataFrame]:
+def get_financial_statements(
+    ticker: str,
+    *,
+    cache: bool = False,
+    cache_dir: str | Path = "data/processed",
+    use_cache_fallback: bool = True,
+) -> dict[str, pd.DataFrame]:
     """Load annual financial statements for a ticker from yfinance.
 
     Args:
         ticker: Public equity ticker symbol, for example ``AAPL``.
+        cache: Whether to persist normalized statements as CSV files.
+        cache_dir: Directory for cached normalized statements.
+        use_cache_fallback: Whether to load cached statements when live data is empty.
 
     Returns:
         A normalized dictionary with ``income_statement``, ``balance_sheet``,
@@ -53,7 +63,13 @@ def get_financial_statements(ticker: str) -> dict[str, pd.DataFrame]:
 
     normalized = normalize_financials(raw)
     if all(statement.empty for statement in normalized.values()):
+        if use_cache_fallback:
+            cached = load_cached_financials(symbol, cache_dir=cache_dir)
+            if any(not statement.empty for statement in cached.values()):
+                return cached
         raise FinancialDataError(f"No financial statements returned for {symbol}.")
+    if cache:
+        save_financial_statements(normalized, symbol, output_dir=cache_dir)
     return normalized
 
 
@@ -86,7 +102,7 @@ def normalize_financials(raw: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame
 def get_ttm_metrics(ticker: str) -> dict[str, float | None]:
     """Return basic trailing metrics useful for ratios and valuation inputs."""
 
-    statements = get_financial_statements(ticker)
+    statements = get_financial_statements(ticker, cache=True)
     income = statements["income_statement"]
     cash_flow = statements["cash_flow"]
 
@@ -135,3 +151,47 @@ def statements_to_dict(statements: dict[str, pd.DataFrame]) -> dict[str, Any]:
     """Convert statement DataFrames into plain dictionaries for serialization."""
 
     return {key: frame.to_dict() for key, frame in statements.items()}
+
+
+def save_financial_statements(
+    statements: dict[str, pd.DataFrame],
+    ticker: str,
+    output_dir: str | Path = "data/processed",
+) -> dict[str, Path]:
+    """Save normalized financial statements as CSV files."""
+
+    symbol = _clean_ticker(ticker)
+    target_dir = Path(output_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    paths: dict[str, Path] = {}
+    for key in STATEMENT_KEYS:
+        statement = statements.get(key, pd.DataFrame())
+        if statement.empty:
+            continue
+        path = target_dir / f"{symbol}_{key}.csv"
+        statement.to_csv(path)
+        paths[key] = path
+    return paths
+
+
+def load_cached_financials(
+    ticker: str,
+    cache_dir: str | Path = "data/processed",
+) -> dict[str, pd.DataFrame]:
+    """Load cached normalized financial statements when available."""
+
+    symbol = _clean_ticker(ticker)
+    source_dir = Path(cache_dir)
+    statements: dict[str, pd.DataFrame] = {}
+    for key in STATEMENT_KEYS:
+        path = source_dir / f"{symbol}_{key}.csv"
+        if not path.exists():
+            statements[key] = pd.DataFrame()
+            continue
+        frame = pd.read_csv(path, index_col=0)
+        frame.columns = pd.to_datetime(frame.columns, errors="coerce")
+        frame = frame.loc[:, frame.columns.notna()]
+        frame = frame.apply(pd.to_numeric, errors="coerce")
+        statements[key] = frame
+    return statements

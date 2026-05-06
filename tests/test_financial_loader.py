@@ -69,7 +69,7 @@ def test_get_financial_statements_raises_for_empty_data(monkeypatch) -> None:
     monkeypatch.setattr(financial_loader.yf, "Ticker", EmptyTicker)
 
     with pytest.raises(financial_loader.FinancialDataError, match="No financial statements"):
-        financial_loader.get_financial_statements("AAPL")
+        financial_loader.get_financial_statements("AAPL", use_cache_fallback=False)
 
 
 def test_get_ttm_metrics_maps_latest_values(monkeypatch) -> None:
@@ -80,3 +80,36 @@ def test_get_ttm_metrics_maps_latest_values(monkeypatch) -> None:
     assert metrics["revenue"] == pytest.approx(120)
     assert metrics["net_income"] == pytest.approx(30)
     assert metrics["free_cash_flow"] == pytest.approx(25)
+
+
+def test_financial_statement_cache_roundtrip(tmp_path) -> None:
+    raw = {
+        "income_statement": pd.DataFrame(
+            {"2025-12-31": [120.0]},
+            index=["Total Revenue"],
+        )
+    }
+    statements = financial_loader.normalize_financials(raw)
+
+    paths = financial_loader.save_financial_statements(statements, "AAPL", output_dir=tmp_path)
+    cached = financial_loader.load_cached_financials("AAPL", cache_dir=tmp_path)
+
+    assert "income_statement" in paths
+    assert cached["income_statement"].loc["Total Revenue"].iloc[0] == pytest.approx(120)
+
+
+def test_get_financial_statements_uses_cache_fallback(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(financial_loader.yf, "Ticker", EmptyTicker)
+    statements = financial_loader.normalize_financials(
+        {
+            "income_statement": pd.DataFrame(
+                {"2025-12-31": [120.0]},
+                index=["Total Revenue"],
+            )
+        }
+    )
+    financial_loader.save_financial_statements(statements, "AAPL", output_dir=tmp_path)
+
+    result = financial_loader.get_financial_statements("AAPL", cache_dir=tmp_path)
+
+    assert result["income_statement"].loc["Total Revenue"].iloc[0] == pytest.approx(120)

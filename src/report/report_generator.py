@@ -15,6 +15,7 @@ from src.analysis.technical_analysis import calculate_technical_metrics, generat
 from src.analysis.valuation import build_scenarios, blended_valuation, summarize_valuation
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements, get_ttm_metrics
 from src.data_loader.price_loader import get_company_profile, get_price_history
+from src.utils.formatting import format_value, humanize_label
 
 
 DISCLAIMER = (
@@ -34,6 +35,7 @@ def build_report_context(
     financial_summary: str | None = None,
     valuation_table: pd.DataFrame | None = None,
     valuation_summary: str | None = None,
+    peer_comparison: str | None = None,
     generated_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the Jinja context for a Markdown equity report."""
@@ -61,7 +63,7 @@ def build_report_context(
         "price_analysis": _format_price_analysis(technical_metrics, technical_summary),
         "financial_analysis": _format_financial_analysis(metrics, financial_text),
         "valuation_analysis": valuation_text,
-        "peer_comparison": "Peer comparison is configured for a later milestone.",
+        "peer_comparison": peer_comparison or "No peer comparison table was supplied for this report.",
         "scenario_table": _format_markdown_table(valuation),
         "risk_factors": _default_risk_factors(),
         "watchlist": _default_watchlist(),
@@ -116,7 +118,7 @@ def generate_report_for_ticker(
     financial_metrics: dict[str, float | None]
     financial_summary: str
     try:
-        statements = get_financial_statements(symbol)
+        statements = get_financial_statements(symbol, cache=True)
         financial_metrics = calculate_financial_metrics(statements)
         financial_summary = generate_financial_summary(financial_metrics)
     except FinancialDataError as exc:
@@ -201,7 +203,7 @@ def _format_company_profile(profile: dict[str, Any]) -> str:
         ("Name", profile.get("name")),
         ("Sector", profile.get("sector")),
         ("Industry", profile.get("industry")),
-        ("Market Cap", profile.get("marketCap")),
+        ("Market Cap", format_value(profile.get("marketCap"), "marketCap")),
         ("Currency", profile.get("currency")),
     ]
     return "\n".join(f"- {label}: {value if value is not None else 'N/A'}" for label, value in rows)
@@ -209,13 +211,16 @@ def _format_company_profile(profile: dict[str, Any]) -> str:
 
 def _format_price_analysis(metrics: dict[str, Any], summary: str) -> str:
     rows = [
-        {"Metric": "Latest Close", "Value": _format_number(metrics["latest_close"])},
-        {"Metric": "MA20", "Value": _format_number(metrics["MA20"])},
-        {"Metric": "MA50", "Value": _format_number(metrics["MA50"])},
-        {"Metric": "MA200", "Value": _format_number(metrics["MA200"])},
-        {"Metric": "RSI", "Value": _format_number(metrics["RSI"])},
-        {"Metric": "Annualized Volatility", "Value": _format_percent(metrics["annualized_volatility"])},
-        {"Metric": "Max Drawdown", "Value": _format_percent(metrics["max_drawdown"])},
+        {"Metric": "Latest Close", "Value": format_value(metrics["latest_close"], "latest_close")},
+        {"Metric": "MA20", "Value": format_value(metrics["MA20"], "MA20")},
+        {"Metric": "MA50", "Value": format_value(metrics["MA50"], "MA50")},
+        {"Metric": "MA200", "Value": format_value(metrics["MA200"], "MA200")},
+        {"Metric": "RSI", "Value": format_value(metrics["RSI"], "RSI")},
+        {
+            "Metric": "Annualized Volatility",
+            "Value": format_value(metrics["annualized_volatility"], "annualized_volatility"),
+        },
+        {"Metric": "Max Drawdown", "Value": format_value(metrics["max_drawdown"], "max_drawdown")},
     ]
     return f"{summary}\n\n{_rows_to_markdown(rows)}"
 
@@ -224,7 +229,10 @@ def _format_financial_analysis(metrics: dict[str, float | None], summary: str) -
     if not metrics:
         return summary
 
-    rows = [{"Metric": key, "Value": _format_metric_value(value)} for key, value in metrics.items()]
+    rows = [
+        {"Metric": humanize_label(key), "Value": format_value(value, key)}
+        for key, value in metrics.items()
+    ]
     return f"{summary}\n\n{_rows_to_markdown(rows)}"
 
 
@@ -235,8 +243,16 @@ def _format_markdown_table(frame: pd.DataFrame) -> str:
     if "assumed_inputs" in display.columns:
         display["assumed_inputs"] = display["assumed_inputs"].map(_compact_assumptions)
     if "target_price" in display.columns:
-        display["target_price"] = display["target_price"].map(_format_metric_value)
+        display["target_price"] = display["target_price"].map(lambda value: format_value(value, "target_price"))
     return _rows_to_markdown(display.to_dict(orient="records"))
+
+
+def format_dataframe_markdown(frame: pd.DataFrame) -> str:
+    """Format a DataFrame as a lightweight Markdown table."""
+
+    if frame.empty:
+        return "N/A"
+    return _rows_to_markdown(frame.to_dict(orient="records"))
 
 
 def _rows_to_markdown(rows: list[dict[str, Any]]) -> str:
@@ -268,7 +284,7 @@ def _compact_assumptions(value: Any) -> str:
     for key, item in value.items():
         if item is None:
             continue
-        parts.append(f"{key}={_format_metric_value(item)}")
+        parts.append(f"{humanize_label(key)}={format_value(item, key)}")
     return ", ".join(parts) if parts else "N/A"
 
 
@@ -314,24 +330,6 @@ def _sources_and_disclaimer() -> str:
             f"- Disclaimer: {DISCLAIMER}",
         ]
     )
-
-
-def _format_metric_value(value: Any) -> str:
-    if value is None or pd.isna(value):
-        return "N/A"
-    if isinstance(value, float):
-        return _format_number(value)
-    return str(value)
-
-
-def _format_number(value: float) -> str:
-    return f"{value:,.2f}"
-
-
-def _format_percent(value: float | None) -> str:
-    if value is None or pd.isna(value):
-        return "N/A"
-    return f"{value:.1%}"
 
 
 def main() -> None:

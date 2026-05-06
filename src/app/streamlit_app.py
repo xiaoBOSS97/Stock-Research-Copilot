@@ -29,9 +29,11 @@ from src.data_loader.price_loader import PriceDataError, get_company_profile, ge
 from src.report.report_generator import (
     DISCLAIMER,
     build_report_context,
+    format_dataframe_markdown,
     render_markdown_report,
     save_report,
 )
+from src.utils.formatting import format_value, humanize_label
 
 
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -80,7 +82,7 @@ def load_financial_data(ticker: str) -> tuple[dict[str, pd.DataFrame], dict[str,
     """Load financial statements and metrics, returning empty data on failure."""
 
     try:
-        statements = get_financial_statements(ticker)
+        statements = get_financial_statements(ticker, cache=True)
         metrics = calculate_financial_metrics(statements)
         return statements, metrics, generate_financial_summary(metrics)
     except (FinancialDataError, ValueError, TypeError) as exc:
@@ -189,20 +191,39 @@ def build_valuation_table(
 
 
 def build_peer_table(peers: list[str], period: str, interval: str) -> pd.DataFrame:
-    """Build a simple peer comparison table from latest price metrics."""
+    """Build a peer comparison table from technical and financial metrics."""
 
     rows = []
     for peer in peers:
         data, error = load_price_data(peer, period, interval)
+        profile, _ = load_profile(peer)
+        _, financial_metrics, _ = load_financial_data(peer)
         if data is None:
-            rows.append({"Ticker": peer, "Latest Close": "N/A", "RSI": "N/A", "Trend": error or "N/A"})
+            rows.append(
+                {
+                    "Ticker": peer,
+                    "Market Cap": format_value(profile.get("marketCap"), "marketCap"),
+                    "Latest Close": "N/A",
+                    "RSI": "N/A",
+                    "Revenue Growth": format_value(
+                        financial_metrics.get("revenue_growth_yoy"), "revenue_growth_yoy"
+                    ),
+                    "Net Margin": format_value(financial_metrics.get("net_margin"), "net_margin"),
+                    "Trend": error or "N/A",
+                }
+            )
             continue
         metrics = calculate_technical_metrics(data)
         rows.append(
             {
                 "Ticker": peer,
-                "Latest Close": f"{metrics['latest_close']:,.2f}",
-                "RSI": f"{metrics['RSI']:.1f}",
+                "Market Cap": format_value(profile.get("marketCap"), "marketCap"),
+                "Latest Close": format_value(metrics["latest_close"], "latest_close"),
+                "RSI": format_value(metrics["RSI"], "RSI"),
+                "Revenue Growth": format_value(
+                    financial_metrics.get("revenue_growth_yoy"), "revenue_growth_yoy"
+                ),
+                "Net Margin": format_value(financial_metrics.get("net_margin"), "net_margin"),
                 "Trend": metrics["trend"].replace("_", " "),
             }
         )
@@ -214,12 +235,12 @@ def render_metric_cards(technical_metrics: dict[str, Any], financial_metrics: di
 
     columns = st.columns(6)
     cards = [
-        ("Close", f"{technical_metrics['latest_close']:,.2f}"),
-        ("RSI", f"{technical_metrics['RSI']:.1f}"),
-        ("Volatility", f"{technical_metrics['annualized_volatility']:.1%}"),
-        ("Revenue Growth", format_optional_percent(financial_metrics.get("revenue_growth_yoy"))),
-        ("Net Margin", format_optional_percent(financial_metrics.get("net_margin"))),
-        ("FCF Margin", format_optional_percent(financial_metrics.get("fcf_margin"))),
+        ("Close", format_value(technical_metrics["latest_close"], "latest_close")),
+        ("RSI", format_value(technical_metrics["RSI"], "RSI")),
+        ("Volatility", format_value(technical_metrics["annualized_volatility"], "annualized_volatility")),
+        ("Revenue Growth", format_value(financial_metrics.get("revenue_growth_yoy"), "revenue_growth_yoy")),
+        ("Net Margin", format_value(financial_metrics.get("net_margin"), "net_margin")),
+        ("FCF Margin", format_value(financial_metrics.get("fcf_margin"), "fcf_margin")),
     ]
     for column, (label, value) in zip(columns, cards, strict=True):
         column.metric(label, value)
@@ -229,6 +250,29 @@ def format_optional_percent(value: float | None) -> str:
     """Format optional percentage values for UI display."""
 
     return "N/A" if value is None or pd.isna(value) else f"{value:.1%}"
+
+
+def metrics_to_display_frame(metrics: dict[str, float | None]) -> pd.DataFrame:
+    """Convert metric dictionaries into readable dashboard rows."""
+
+    rows = [
+        {"Metric": humanize_label(key), "Value": format_value(value, key)}
+        for key, value in metrics.items()
+    ]
+    return pd.DataFrame(rows)
+
+
+def valuation_to_display_frame(valuation_table: pd.DataFrame) -> pd.DataFrame:
+    """Convert valuation output into a compact dashboard table."""
+
+    display = valuation_table.copy()
+    if "target_price" in display.columns:
+        display["target_price"] = display["target_price"].map(lambda value: format_value(value, "target_price"))
+        display = display.rename(columns={"target_price": "Target Price"})
+    if "assumed_inputs" in display.columns:
+        display = display.drop(columns=["assumed_inputs"])
+    display = display.rename(columns={column: humanize_label(column) for column in display.columns})
+    return display
 
 
 def main() -> None:
@@ -269,6 +313,7 @@ def main() -> None:
             for item in [
                 str(profile.get("sector") or ""),
                 str(profile.get("industry") or ""),
+                f"Market Cap: {format_value(profile.get('marketCap'), 'marketCap')}",
                 str(profile.get("currency") or ""),
             ]
             if item
@@ -312,16 +357,18 @@ def main() -> None:
     if financial_chart is not None:
         st.plotly_chart(financial_chart, width="stretch")
     if financial_metrics:
-        st.dataframe(pd.DataFrame([financial_metrics]).T.rename(columns={0: "Value"}), width="stretch")
+        st.dataframe(metrics_to_display_frame(financial_metrics), width="stretch", hide_index=True)
 
     st.subheader("Valuation Scenarios")
     st.write(valuation_summary)
-    st.dataframe(valuation_table, width="stretch", hide_index=True)
+    st.dataframe(valuation_to_display_frame(valuation_table), width="stretch", hide_index=True)
 
     peers = parse_peer_input(peer_text)
     st.subheader("Peer Comparison")
+    peer_frame = pd.DataFrame()
     if peers:
-        st.dataframe(build_peer_table(peers, period, interval), width="stretch", hide_index=True)
+        peer_frame = build_peer_table(peers, period, interval)
+        st.dataframe(peer_frame, width="stretch", hide_index=True)
     else:
         st.write("No configured peers.")
 
@@ -333,6 +380,7 @@ def main() -> None:
         financial_summary=financial_summary,
         valuation_table=valuation_table,
         valuation_summary=valuation_summary,
+        peer_comparison=format_dataframe_markdown(peer_frame) if not peer_frame.empty else None,
     )
     markdown_report = render_markdown_report(report_context)
 
