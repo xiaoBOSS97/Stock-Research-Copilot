@@ -22,6 +22,18 @@ The price loader lives in `src/data_loader/price_loader.py` and currently suppor
 - `validate_ticker(ticker)`
 - optional CSV caching to `data/raw`
 
+## Technical Analysis
+
+The technical analysis module lives in `src/analysis/technical_analysis.py` and currently supports:
+
+- `add_moving_averages(price_data)` for MA20, MA50, and MA200
+- `calculate_rsi(price_data, window=14)`
+- `calculate_volatility(price_data)`
+- `calculate_max_drawdown(price_data)`
+- `add_technical_indicators(price_data)`
+- `calculate_technical_metrics(price_data)` for dashboard/report summaries
+- `generate_technical_summary(price_data)` with disclaimer-safe wording
+
 ## Quick Start
 
 ```bash

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
 
+DEFAULT_MA_WINDOWS = (20, 50, 200)
+TRADING_DAYS_PER_YEAR = 252
+
+
 def _require_close(price_data: pd.DataFrame) -> pd.Series:
+    """Return a numeric close series after validating the input frame."""
+
     if price_data.empty:
         raise ValueError("Price data must not be empty.")
     if "Close" not in price_data.columns:
@@ -17,7 +25,10 @@ def _require_close(price_data: pd.DataFrame) -> pd.Series:
     return close
 
 
-def add_moving_averages(price_data: pd.DataFrame, windows: tuple[int, ...] = (20, 50, 200)) -> pd.DataFrame:
+def add_moving_averages(
+    price_data: pd.DataFrame,
+    windows: tuple[int, ...] = DEFAULT_MA_WINDOWS,
+) -> pd.DataFrame:
     """Return price data with simple moving average columns added."""
 
     close = _require_close(price_data)
@@ -49,8 +60,11 @@ def calculate_rsi(price_data: pd.DataFrame, window: int = 14) -> pd.Series:
     rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi = 100 - (100 / (1 + rs))
 
-    rsi = rsi.where(avg_loss.ne(0), 100)
-    rsi = rsi.where(avg_gain.ne(0), 0)
+    no_losses = avg_loss.eq(0)
+    no_gains = avg_gain.eq(0)
+    rsi = rsi.mask(no_losses & ~no_gains, 100)
+    rsi = rsi.mask(no_gains & ~no_losses, 0)
+    rsi = rsi.mask(no_gains & no_losses, 50)
     rsi = rsi.fillna(50).clip(0, 100)
     rsi.name = "RSI"
     return rsi
@@ -64,8 +78,11 @@ def add_rsi(price_data: pd.DataFrame, window: int = 14) -> pd.DataFrame:
     return result
 
 
-def calculate_volatility(price_data: pd.DataFrame, trading_days: int = 252) -> float:
+def calculate_volatility(price_data: pd.DataFrame, trading_days: int = TRADING_DAYS_PER_YEAR) -> float:
     """Calculate annualized volatility from daily close-to-close returns."""
+
+    if trading_days <= 0:
+        raise ValueError("Trading days must be a positive integer.")
 
     close = _require_close(price_data)
     returns = close.pct_change().dropna()
@@ -77,35 +94,70 @@ def calculate_volatility(price_data: pd.DataFrame, trading_days: int = 252) -> f
 def calculate_max_drawdown(price_data: pd.DataFrame) -> float:
     """Calculate maximum drawdown as a non-positive decimal value."""
 
-    close = _require_close(price_data)
+    close = _require_close(price_data).dropna()
     running_max = close.cummax()
     drawdown = close / running_max - 1
     return float(drawdown.min())
 
 
-def add_technical_indicators(price_data: pd.DataFrame) -> pd.DataFrame:
+def add_technical_indicators(
+    price_data: pd.DataFrame,
+    windows: tuple[int, ...] = DEFAULT_MA_WINDOWS,
+    rsi_window: int = 14,
+) -> pd.DataFrame:
     """Return price data with MVP technical indicators added."""
 
-    result = add_moving_averages(price_data)
-    result["RSI"] = calculate_rsi(result)
+    result = add_moving_averages(price_data, windows=windows)
+    result["RSI"] = calculate_rsi(result, window=rsi_window)
     result["annualized_volatility"] = calculate_volatility(result)
     result["max_drawdown"] = calculate_max_drawdown(result)
     return result
 
 
-def generate_technical_summary(price_data: pd.DataFrame) -> str:
-    """Generate a rule-based technical summary for reports."""
+def calculate_technical_metrics(price_data: pd.DataFrame) -> dict[str, Any]:
+    """Calculate latest technical metrics for dashboard cards and reports.
+
+    Returns:
+        A dictionary containing latest close, MA20/50/200, RSI, annualized
+        volatility, max drawdown, trend label, and momentum label.
+    """
 
     enriched = add_technical_indicators(price_data)
     latest = enriched.iloc[-1]
-    close = latest["Close"]
-    ma200 = latest["MA200"]
-    rsi = latest["RSI"]
+    close = float(latest["Close"])
+    ma200 = float(latest["MA200"])
+    rsi = float(latest["RSI"])
 
-    trend = "above" if close >= ma200 else "below"
-    momentum = "overheated" if rsi > 70 else "oversold" if rsi < 30 else "neutral"
+    return {
+        "latest_close": close,
+        "MA20": float(latest["MA20"]),
+        "MA50": float(latest["MA50"]),
+        "MA200": ma200,
+        "RSI": rsi,
+        "annualized_volatility": float(latest["annualized_volatility"]),
+        "max_drawdown": float(latest["max_drawdown"]),
+        "trend": "above_ma200" if close >= ma200 else "below_ma200",
+        "momentum": _momentum_label(rsi),
+    }
+
+
+def _momentum_label(rsi: float) -> str:
+    if rsi > 70:
+        return "overheated"
+    if rsi < 30:
+        return "oversold"
+    return "neutral"
+
+
+def generate_technical_summary(price_data: pd.DataFrame) -> str:
+    """Generate a rule-based technical summary for reports."""
+
+    metrics = calculate_technical_metrics(price_data)
+
+    trend = "above" if metrics["trend"] == "above_ma200" else "below"
     return (
         f"The latest close is {trend} the 200-day moving average, while RSI is "
-        f"{rsi:.1f}, indicating {momentum} short-term momentum. Technical indicators "
+        f"{metrics['RSI']:.1f}, indicating {metrics['momentum']} short-term momentum. "
+        "Technical indicators "
         "are market behavior signals and do not replace fundamental analysis."
     )
