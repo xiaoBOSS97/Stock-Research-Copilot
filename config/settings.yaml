@@ -1,0 +1,15 @@
+default_ticker: AAPL
+default_period: 5y
+default_interval: 1d
+cache_enabled: true
+report_output_dir: data/reports
+risk_free_rate: 0.04
+valuation:
+  pe:
+    bear_multiple_discount: 0.75
+    base_multiple: historical_average
+    bull_multiple_premium: 1.25
+  ps:
+    bear_multiple_discount: 0.75
+    base_multiple: peer_median
+    bull_multiple_premium: 1.25

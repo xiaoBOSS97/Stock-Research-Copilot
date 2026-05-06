@@ -1,0 +1,15 @@
+AAPL:
+  - MSFT
+  - GOOGL
+  - META
+  - AMZN
+NVDA:
+  - AMD
+  - INTC
+  - AVGO
+  - QCOM
+TSLA:
+  - GM
+  - F
+  - RIVN
+  - LCID

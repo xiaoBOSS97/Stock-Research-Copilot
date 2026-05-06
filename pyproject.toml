@@ -1,0 +1,27 @@
+[project]
+name = "stock-research-copilot"
+version = "0.1.0"
+description = "Educational equity research dashboard and report generator."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jinja2",
+    "numpy",
+    "pandas",
+    "plotly",
+    "pytest",
+    "python-dotenv",
+    "pyyaml",
+    "requests",
+    "streamlit",
+    "yfinance",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
