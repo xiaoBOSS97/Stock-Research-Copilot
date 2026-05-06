@@ -9,9 +9,18 @@ Stock Research Copilot collects public market and financial data, computes techn
 This repository is currently at the initial scaffold stage. The implemented v0.1 foundation includes:
 
 - repository structure from `docs/stock_research_copilot_codex_spec.pdf`
-- `yfinance` price history and company profile loader
+- `yfinance` price history and company profile loader with ticker validation and optional raw CSV caching
 - moving averages, RSI, annualized volatility, and max drawdown calculations
 - focused unit tests for technical analysis behavior
+
+## Price Loader
+
+The price loader lives in `src/data_loader/price_loader.py` and currently supports:
+
+- `get_price_history(ticker, period="5y", interval="1d")`
+- `get_company_profile(ticker)`
+- `validate_ticker(ticker)`
+- optional CSV caching to `data/raw`
 
 ## Quick Start
 
