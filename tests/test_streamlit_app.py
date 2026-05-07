@@ -4,7 +4,9 @@ import pandas as pd
 
 from src.app.streamlit_app import (
     build_valuation_table,
+    default_period_index,
     format_optional_percent,
+    grouped_performance_metric_specs,
     metric_card_specs,
     metrics_to_display_frame,
     performance_metric_specs,
@@ -16,6 +18,11 @@ from src.app.streamlit_app import (
 
 def test_parse_peer_input_normalizes_symbols() -> None:
     assert parse_peer_input(" msft, googl ,, meta ") == ["MSFT", "GOOGL", "META"]
+
+
+def test_default_period_index_uses_settings_value() -> None:
+    assert default_period_index({"default_period": "3y"}) == 1
+    assert default_period_index({"default_period": "bad"}) == 2
 
 
 def test_metric_card_specs_include_native_help_for_every_metric() -> None:
@@ -65,6 +72,21 @@ def test_performance_metric_specs_include_native_help_for_every_metric() -> None
 
     assert len(specs) == len(metrics)
     assert all(help_text != "Term explanation is not available yet." for _, _, help_text in specs)
+
+
+def test_grouped_performance_metric_specs_groups_core_metrics() -> None:
+    grouped = grouped_performance_metric_specs(
+        {
+            "revenue_growth_yoy": 0.1,
+            "net_margin": 0.2,
+            "roe": 0.4,
+            "current_ratio": 1.5,
+        }
+    )
+
+    group_names = [name for name, _ in grouped]
+
+    assert group_names == ["Growth", "Profitability", "Returns", "Balance Sheet"]
 
 
 def test_format_optional_percent_handles_missing_values() -> None:

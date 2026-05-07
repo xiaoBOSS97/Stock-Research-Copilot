@@ -44,6 +44,13 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
 REPORT_DIR = PROJECT_ROOT / "data" / "reports"
 PERIOD_OPTIONS = {"1Y": "1y", "3Y": "3y", "5Y": "5y", "Max": "max"}
+EXAMPLE_TICKERS = ("AAPL", "NVDA", "MSFT", "TSLA")
+PERFORMANCE_METRIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Growth", ("revenue_growth_yoy", "net_income_growth_yoy", "revenue_cagr")),
+    ("Profitability", ("gross_margin", "operating_margin", "net_margin", "fcf_margin")),
+    ("Returns", ("roe", "roa", "roic")),
+    ("Balance Sheet", ("debt_to_equity", "current_ratio", "interest_coverage", "free_cash_flow")),
+)
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -97,6 +104,14 @@ def parse_peer_input(raw_text: str) -> list[str]:
     """Parse comma-separated peer ticker input."""
 
     return [item.strip().upper() for item in raw_text.split(",") if item.strip()]
+
+
+def default_period_index(settings: dict[str, Any]) -> int:
+    """Return the configured default period index for the sidebar selector."""
+
+    default_period = str(settings.get("default_period", "5y"))
+    options = list(PERIOD_OPTIONS.values())
+    return options.index(default_period) if default_period in options else 2
 
 
 def build_price_chart(price_data: pd.DataFrame) -> go.Figure:
@@ -307,14 +322,49 @@ def performance_metric_specs(metrics: dict[str, float | None]) -> list[tuple[str
     ]
 
 
+def grouped_performance_metric_specs(
+    metrics: dict[str, float | None],
+) -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """Group financial metrics into dashboard-friendly sections."""
+
+    grouped = []
+    used_keys = set()
+    for group_name, keys in PERFORMANCE_METRIC_GROUPS:
+        specs = [
+            (humanize_label(key), format_value(metrics.get(key), key), term_help(humanize_label(key)))
+            for key in keys
+            if key in metrics
+        ]
+        if specs:
+            grouped.append((group_name, specs))
+            used_keys.update(keys)
+
+    remaining = [
+        (humanize_label(key), format_value(value, key), term_help(humanize_label(key)))
+        for key, value in metrics.items()
+        if key not in used_keys
+    ]
+    if remaining:
+        grouped.append(("Other", remaining))
+
+    return grouped
+
+
 def render_performance_metrics(metrics: dict[str, float | None]) -> None:
     """Render financial performance metrics with native Streamlit help icons."""
 
-    specs = performance_metric_specs(metrics)
-    for index in range(0, len(specs), 4):
-        columns = st.columns(4)
-        for column, (label, value, help_text) in zip(columns, specs[index : index + 4], strict=False):
-            column.metric(label, value, help=help_text)
+    groups = grouped_performance_metric_specs(metrics)
+    if not groups:
+        st.info("Financial performance metrics are unavailable for this ticker.")
+        return
+
+    tabs = st.tabs([group_name for group_name, _ in groups])
+    for tab, (_, specs) in zip(tabs, groups, strict=True):
+        with tab:
+            for index in range(0, len(specs), 4):
+                columns = st.columns(4)
+                for column, (label, value, help_text) in zip(columns, specs[index : index + 4], strict=False):
+                    column.metric(label, value, help=help_text)
 
 
 def valuation_to_display_frame(valuation_table: pd.DataFrame) -> pd.DataFrame:
@@ -337,6 +387,8 @@ def main() -> None:
     peers_config = load_yaml(CONFIG_DIR / "peers.yaml")
 
     st.set_page_config(page_title="Stock Research Copilot", layout="wide")
+    st.session_state.setdefault("markdown_report", None)
+    st.session_state.setdefault("markdown_report_ticker", None)
 
     with st.sidebar:
         default_ticker = str(settings.get("default_ticker", "AAPL"))
@@ -344,10 +396,11 @@ def main() -> None:
             st.text_input("Ticker", value=default_ticker, help=term_help("Ticker")).strip().upper()
             or default_ticker
         )
+        st.caption("Try: " + ", ".join(EXAMPLE_TICKERS))
         selected_period_label = st.selectbox(
             "Period",
             list(PERIOD_OPTIONS),
-            index=2,
+            index=default_period_index(settings),
             help="Historical price range used for price charts and technical indicators.",
         )
         period = PERIOD_OPTIONS[selected_period_label]
@@ -403,8 +456,9 @@ def main() -> None:
             )
             net_debt_billions = st.number_input("Net Debt ($B)", value=0.0, step=5.0, help=term_help("Net Debt"))
 
-    price_data, price_warning = load_price_data(ticker, period, interval)
-    profile, profile_warning = load_profile(ticker)
+    with st.spinner(f"Loading {ticker} market data..."):
+        price_data, price_warning = load_price_data(ticker, period, interval)
+        profile, profile_warning = load_profile(ticker)
 
     st.title(f"{profile.get('name') or ticker} ({ticker})")
     st.caption(
@@ -430,7 +484,8 @@ def main() -> None:
         st.caption(DISCLAIMER)
         return
 
-    statements, financial_metrics, financial_summary = load_financial_data(ticker)
+    with st.spinner(f"Loading {ticker} financial statements..."):
+        statements, financial_metrics, financial_summary = load_financial_data(ticker)
     technical_metrics = calculate_technical_metrics(price_data)
     valuation_table = build_valuation_table(
         method=valuation_method,
@@ -477,29 +532,40 @@ def main() -> None:
     else:
         st.write("No configured peers.")
 
-    report_context = build_report_context(
-        ticker=ticker,
-        price_history=price_data,
-        company_profile=profile,
-        financial_metrics=financial_metrics,
-        financial_summary=financial_summary,
-        valuation_table=valuation_table,
-        valuation_summary=valuation_summary,
-        peer_comparison=format_dataframe_markdown(peer_frame) if not peer_frame.empty else None,
-    )
-    markdown_report = render_markdown_report(report_context)
-
     st.subheader("Research Report")
-    st.markdown(markdown_report)
-    st.download_button(
-        "Download Markdown",
-        data=markdown_report,
-        file_name=f"{ticker}_report.md",
-        mime="text/markdown",
-    )
-    if st.button("Save Report"):
-        output_path = save_report(markdown_report, ticker, REPORT_DIR)
-        st.success(f"Saved to {output_path}")
+    st.caption("Generate the report when the assumptions and peer list look right.")
+    if st.button("Generate Report Preview", type="primary"):
+        with st.spinner("Generating report preview..."):
+            report_context = build_report_context(
+                ticker=ticker,
+                price_history=price_data,
+                company_profile=profile,
+                financial_metrics=financial_metrics,
+                financial_summary=financial_summary,
+                valuation_table=valuation_table,
+                valuation_summary=valuation_summary,
+                peer_comparison=format_dataframe_markdown(peer_frame) if not peer_frame.empty else None,
+            )
+            st.session_state["markdown_report"] = render_markdown_report(report_context)
+            st.session_state["markdown_report_ticker"] = ticker
+
+    markdown_report = st.session_state.get("markdown_report")
+    report_ticker = st.session_state.get("markdown_report_ticker")
+    if markdown_report and report_ticker == ticker:
+        st.markdown(markdown_report)
+        st.download_button(
+            "Download Markdown",
+            data=markdown_report,
+            file_name=f"{ticker}_report.md",
+            mime="text/markdown",
+        )
+        if st.button("Save Report"):
+            output_path = save_report(markdown_report, ticker, REPORT_DIR)
+            st.success(f"Saved to {output_path}")
+    elif markdown_report:
+        st.info("Generate a fresh report preview for the current ticker.")
+    else:
+        st.info("No report preview generated yet.")
 
     st.caption(DISCLAIMER)
     st.caption("Data sources: Yahoo Finance via yfinance. Financial data may be incomplete or unavailable.")
