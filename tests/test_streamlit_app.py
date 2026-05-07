@@ -5,7 +5,9 @@ import pandas as pd
 from src.app.streamlit_app import (
     build_valuation_table,
     format_optional_percent,
+    metric_card_specs,
     metrics_to_display_frame,
+    performance_metric_specs,
     parse_peer_input,
     statement_row,
     valuation_to_display_frame,
@@ -14,6 +16,55 @@ from src.app.streamlit_app import (
 
 def test_parse_peer_input_normalizes_symbols() -> None:
     assert parse_peer_input(" msft, googl ,, meta ") == ["MSFT", "GOOGL", "META"]
+
+
+def test_metric_card_specs_include_native_help_for_every_metric() -> None:
+    cards = metric_card_specs(
+        {
+            "latest_close": 100.0,
+            "RSI": 55.0,
+            "annualized_volatility": 0.2,
+        },
+        {
+            "revenue_growth_yoy": 0.1,
+            "net_margin": 0.2,
+            "fcf_margin": 0.15,
+        },
+    )
+
+    assert [label for label, _, _ in cards] == [
+        "Close",
+        "RSI",
+        "Volatility",
+        "Revenue Growth",
+        "Net Margin",
+        "FCF Margin",
+    ]
+    assert all(help_text != "Term explanation is not available yet." for _, _, help_text in cards)
+
+
+def test_performance_metric_specs_include_native_help_for_every_metric() -> None:
+    metrics = {
+        "revenue_growth_yoy": 0.1,
+        "net_income_growth_yoy": 0.2,
+        "revenue_cagr": 0.08,
+        "gross_margin": 0.5,
+        "operating_margin": 0.3,
+        "net_margin": 0.2,
+        "fcf_margin": 0.15,
+        "roe": 0.4,
+        "roa": 0.2,
+        "roic": 0.25,
+        "debt_to_equity": 1.1,
+        "current_ratio": 1.5,
+        "interest_coverage": 12.0,
+        "free_cash_flow": 100_000_000_000,
+    }
+
+    specs = performance_metric_specs(metrics)
+
+    assert len(specs) == len(metrics)
+    assert all(help_text != "Term explanation is not available yet." for _, _, help_text in specs)
 
 
 def test_format_optional_percent_handles_missing_values() -> None:

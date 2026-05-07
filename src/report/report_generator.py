@@ -21,6 +21,7 @@ from src.analysis.valuation import (
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements, get_ttm_metrics
 from src.data_loader.price_loader import get_company_profile, get_price_history
 from src.utils.formatting import format_value, humanize_label
+from src.utils.glossary import GLOSSARY, term_help
 
 
 DISCLAIMER = (
@@ -72,6 +73,7 @@ def build_report_context(
         "scenario_table": _format_markdown_table(valuation),
         "risk_factors": _default_risk_factors(),
         "watchlist": _default_watchlist(),
+        "terms_used": _terms_used(),
         "sources_and_disclaimer": _sources_and_disclaimer(),
         "technical_metrics": technical_metrics,
         "financial_metrics": metrics,
@@ -334,6 +336,26 @@ def _default_watchlist() -> str:
             "- Valuation multiple changes versus peers and history.",
         ]
     )
+
+
+def _terms_used() -> str:
+    terms = [
+        "RSI",
+        "MA20",
+        "MA50",
+        "MA200",
+        "Revenue Growth YoY",
+        "Net Margin",
+        "Free Cash Flow",
+        "P/E",
+        "P/S",
+        "DCF",
+        "Bear",
+        "Base",
+        "Bull",
+    ]
+    lines = [f"- {term}: {term_help(term)}" for term in terms if term in GLOSSARY]
+    return "\n".join(lines)
 
 
 def _sources_and_disclaimer() -> str:

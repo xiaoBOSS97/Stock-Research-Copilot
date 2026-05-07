@@ -37,6 +37,7 @@ from src.report.report_generator import (
     save_report,
 )
 from src.utils.formatting import format_value, humanize_label
+from src.utils.glossary import term_help
 
 
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -256,6 +257,20 @@ def render_metric_cards(technical_metrics: dict[str, Any], financial_metrics: di
     """Render top-level Streamlit metric cards."""
 
     columns = st.columns(6)
+    for column, (label, value, help_text) in zip(
+        columns,
+        metric_card_specs(technical_metrics, financial_metrics),
+        strict=True,
+    ):
+        column.metric(label, value, help=help_text)
+
+
+def metric_card_specs(
+    technical_metrics: dict[str, Any],
+    financial_metrics: dict[str, float | None],
+) -> list[tuple[str, str, str]]:
+    """Return labels, values, and native Streamlit help text for metric cards."""
+
     cards = [
         ("Close", format_value(technical_metrics["latest_close"], "latest_close")),
         ("RSI", format_value(technical_metrics["RSI"], "RSI")),
@@ -264,8 +279,7 @@ def render_metric_cards(technical_metrics: dict[str, Any], financial_metrics: di
         ("Net Margin", format_value(financial_metrics.get("net_margin"), "net_margin")),
         ("FCF Margin", format_value(financial_metrics.get("fcf_margin"), "fcf_margin")),
     ]
-    for column, (label, value) in zip(columns, cards, strict=True):
-        column.metric(label, value)
+    return [(label, value, term_help(label)) for label, value in cards]
 
 
 def format_optional_percent(value: float | None) -> str:
@@ -282,6 +296,25 @@ def metrics_to_display_frame(metrics: dict[str, float | None]) -> pd.DataFrame:
         for key, value in metrics.items()
     ]
     return pd.DataFrame(rows)
+
+
+def performance_metric_specs(metrics: dict[str, float | None]) -> list[tuple[str, str, str]]:
+    """Return native Streamlit metric specs for the Financial Performance section."""
+
+    return [
+        (humanize_label(key), format_value(value, key), term_help(humanize_label(key)))
+        for key, value in metrics.items()
+    ]
+
+
+def render_performance_metrics(metrics: dict[str, float | None]) -> None:
+    """Render financial performance metrics with native Streamlit help icons."""
+
+    specs = performance_metric_specs(metrics)
+    for index in range(0, len(specs), 4):
+        columns = st.columns(4)
+        for column, (label, value, help_text) in zip(columns, specs[index : index + 4], strict=False):
+            column.metric(label, value, help=help_text)
 
 
 def valuation_to_display_frame(valuation_table: pd.DataFrame) -> pd.DataFrame:
@@ -307,34 +340,68 @@ def main() -> None:
 
     with st.sidebar:
         default_ticker = str(settings.get("default_ticker", "AAPL"))
-        ticker = st.text_input("Ticker", value=default_ticker).strip().upper() or default_ticker
-        selected_period_label = st.selectbox("Period", list(PERIOD_OPTIONS), index=2)
+        ticker = (
+            st.text_input("Ticker", value=default_ticker, help=term_help("Ticker")).strip().upper()
+            or default_ticker
+        )
+        selected_period_label = st.selectbox(
+            "Period",
+            list(PERIOD_OPTIONS),
+            index=2,
+            help="Historical price range used for price charts and technical indicators.",
+        )
         period = PERIOD_OPTIONS[selected_period_label]
         interval = str(settings.get("default_interval", "1d"))
         default_peers = ", ".join(peers_config.get(ticker, []))
-        peer_text = st.text_input("Peers", value=default_peers)
-        valuation_method = st.selectbox("Valuation", ["blended", "blended + DCF", "PE", "PS", "DCF"])
+        peer_text = st.text_input("Peers", value=default_peers, help="Comparable tickers for peer metrics.")
+        valuation_method = st.selectbox(
+            "Valuation",
+            ["blended", "blended + DCF", "PE", "PS", "DCF"],
+            help="Scenario valuation method based on explicit assumptions.",
+        )
         with st.expander("Scenario Assumptions"):
-            base_eps = st.number_input("Forward EPS", min_value=0.0, value=10.0, step=0.1)
-            base_pe = st.number_input("Base PE", min_value=0.0, value=22.0, step=0.5)
+            base_eps = st.number_input("Forward EPS", min_value=0.0, value=10.0, step=0.1, help=term_help("Forward EPS"))
+            base_pe = st.number_input("Base PE", min_value=0.0, value=22.0, step=0.5, help=term_help("P/E"))
             base_revenue_billions = st.number_input(
                 "Forward Revenue ($B)",
                 min_value=0.0,
                 value=400.0,
                 step=5.0,
+                help=term_help("Forward Revenue"),
             )
-            base_ps = st.number_input("Base P/S", min_value=0.0, value=6.0, step=0.1)
-            base_fcf_billions = st.number_input("Base Free Cash Flow ($B)", min_value=0.0, value=100.0, step=5.0)
-            dcf_growth_rate = st.number_input("DCF Growth Rate", min_value=-0.50, max_value=0.50, value=0.05, step=0.005)
-            dcf_discount_rate = st.number_input("DCF Discount Rate", min_value=0.001, max_value=0.50, value=0.10, step=0.005)
+            base_ps = st.number_input("Base P/S", min_value=0.0, value=6.0, step=0.1, help=term_help("P/S"))
+            base_fcf_billions = st.number_input(
+                "Base Free Cash Flow ($B)",
+                min_value=0.0,
+                value=100.0,
+                step=5.0,
+                help=term_help("Base Free Cash Flow"),
+            )
+            dcf_growth_rate = st.number_input(
+                "DCF Growth Rate",
+                min_value=-0.50,
+                max_value=0.50,
+                value=0.05,
+                step=0.005,
+                help=term_help("Growth Rate"),
+            )
+            dcf_discount_rate = st.number_input(
+                "DCF Discount Rate",
+                min_value=0.001,
+                max_value=0.50,
+                value=0.10,
+                step=0.005,
+                help=term_help("Discount Rate"),
+            )
             dcf_terminal_growth_rate = st.number_input(
                 "DCF Terminal Growth",
                 min_value=0.0,
                 max_value=0.10,
                 value=0.025,
                 step=0.005,
+                help=term_help("Terminal Growth Rate"),
             )
-            net_debt_billions = st.number_input("Net Debt ($B)", value=0.0, step=5.0)
+            net_debt_billions = st.number_input("Net Debt ($B)", value=0.0, step=5.0, help=term_help("Net Debt"))
 
     price_data, price_warning = load_price_data(ticker, period, interval)
     profile, profile_warning = load_profile(ticker)
@@ -395,7 +462,7 @@ def main() -> None:
     if financial_chart is not None:
         st.plotly_chart(financial_chart, width="stretch")
     if financial_metrics:
-        st.dataframe(metrics_to_display_frame(financial_metrics), width="stretch", hide_index=True)
+        render_performance_metrics(financial_metrics)
 
     st.subheader("Valuation Scenarios")
     st.write(valuation_summary)

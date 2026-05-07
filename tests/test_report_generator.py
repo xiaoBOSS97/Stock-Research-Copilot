@@ -55,6 +55,7 @@ def test_build_report_context_contains_required_sections() -> None:
     assert "does not provide financial advice" in context["sources_and_disclaimer"]
     assert "Bear" in context["scenario_table"]
     assert "MSFT" in context["peer_comparison"]
+    assert "RSI: Relative Strength Index" in context["terms_used"]
 
 
 def test_render_markdown_report_includes_template_sections() -> None:
@@ -69,6 +70,8 @@ def test_render_markdown_report_includes_template_sections() -> None:
 
     assert "# Apple Inc. (AAPL) Equity Research Report" in markdown
     assert "## 7. Bear / Base / Bull Scenarios" in markdown
+    assert "## 10. Terms Used" in markdown
+    assert "DCF: Discounted cash flow" in markdown
     assert "## Data Sources and Disclaimer" in markdown
 
 
