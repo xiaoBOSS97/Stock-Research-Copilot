@@ -27,6 +27,16 @@ class CompanyProfile:
     industry: str | None = None
     market_cap: int | None = None
     currency: str | None = None
+    trailing_eps: float | None = None
+    forward_eps: float | None = None
+    trailing_pe: float | None = None
+    forward_pe: float | None = None
+    price_to_sales: float | None = None
+    total_revenue: float | None = None
+    free_cash_flow: float | None = None
+    shares_outstanding: float | None = None
+    total_debt: float | None = None
+    total_cash: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the public profile shape expected by app and report layers."""
@@ -38,6 +48,16 @@ class CompanyProfile:
             "industry": self.industry,
             "marketCap": self.market_cap,
             "currency": self.currency,
+            "trailingEps": self.trailing_eps,
+            "forwardEps": self.forward_eps,
+            "trailingPE": self.trailing_pe,
+            "forwardPE": self.forward_pe,
+            "priceToSalesTrailing12Months": self.price_to_sales,
+            "totalRevenue": self.total_revenue,
+            "freeCashflow": self.free_cash_flow,
+            "sharesOutstanding": self.shares_outstanding,
+            "totalDebt": self.total_debt,
+            "totalCash": self.total_cash,
         }
 
 
@@ -150,6 +170,16 @@ def get_company_profile(ticker: str) -> dict[str, Any]:
         industry=info.get("industry"),
         market_cap=info.get("marketCap"),
         currency=info.get("currency"),
+        trailing_eps=info.get("trailingEps"),
+        forward_eps=info.get("forwardEps"),
+        trailing_pe=info.get("trailingPE"),
+        forward_pe=info.get("forwardPE"),
+        price_to_sales=info.get("priceToSalesTrailing12Months"),
+        total_revenue=info.get("totalRevenue"),
+        free_cash_flow=info.get("freeCashflow"),
+        shares_outstanding=info.get("sharesOutstanding"),
+        total_debt=info.get("totalDebt"),
+        total_cash=info.get("totalCash"),
     )
     return profile.to_dict()
 

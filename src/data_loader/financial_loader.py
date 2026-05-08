@@ -102,16 +102,42 @@ def normalize_financials(raw: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame
 def get_ttm_metrics(ticker: str) -> dict[str, float | None]:
     """Return basic trailing metrics useful for ratios and valuation inputs."""
 
-    statements = get_financial_statements(ticker, cache=True)
+    symbol = _clean_ticker(ticker)
+    try:
+        info: dict[str, Any] = yf.Ticker(symbol).info
+    except Exception:  # pragma: no cover - depends on network/client behavior
+        info = {}
+
+    statements = get_financial_statements(symbol, cache=True)
     income = statements["income_statement"]
     cash_flow = statements["cash_flow"]
 
     return {
-        "eps": _latest_value(income, ("Diluted EPS", "Basic EPS")),
-        "revenue": _latest_value(income, ("Total Revenue", "Operating Revenue")),
+        "eps": _first_numeric(
+            info.get("forwardEps"),
+            info.get("trailingEps"),
+            _latest_value(income, ("Diluted EPS", "Basic EPS")),
+        ),
+        "revenue": _first_numeric(
+            info.get("totalRevenue"),
+            _latest_value(income, ("Total Revenue", "Operating Revenue")),
+        ),
         "net_income": _latest_value(income, ("Net Income", "Net Income Common Stockholders")),
-        "free_cash_flow": _latest_free_cash_flow(cash_flow),
+        "free_cash_flow": _first_numeric(info.get("freeCashflow"), _latest_free_cash_flow(cash_flow)),
     }
+
+
+def _first_numeric(*values: Any) -> float | None:
+    """Return the first numeric value from a list of provider fields."""
+
+    for value in values:
+        if value is None:
+            continue
+        numeric = pd.to_numeric(value, errors="coerce")
+        if pd.isna(numeric):
+            continue
+        return float(numeric)
+    return None
 
 
 def _latest_value(statement: pd.DataFrame, row_names: tuple[str, ...]) -> float | None:

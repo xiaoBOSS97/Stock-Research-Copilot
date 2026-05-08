@@ -20,8 +20,7 @@ from src.analysis.valuation import (
 )
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements, get_ttm_metrics
 from src.data_loader.price_loader import get_company_profile, get_price_history
-from src.utils.formatting import format_value, humanize_label
-from src.utils.glossary import GLOSSARY, term_help
+from src.utils.formatting import calculate_upside_downside, format_value, humanize_label
 
 
 DISCLAIMER = (
@@ -59,21 +58,28 @@ def build_report_context(
     )
     metrics = financial_metrics or {}
     financial_text = financial_summary or generate_financial_summary(metrics)
+    peer_text = peer_comparison or ""
 
     return {
         "ticker": symbol,
         "company_name": profile.get("name") or symbol,
         "generated_at": generated_time.isoformat(timespec="seconds"),
         "one_line_summary": _one_line_summary(symbol, technical_metrics, valuation_text),
+        "executive_summary": _executive_summary(symbol, technical_metrics, metrics, valuation),
         "company_profile": _format_company_profile(profile),
         "price_analysis": _format_price_analysis(technical_metrics, technical_summary),
         "financial_analysis": _format_financial_analysis(metrics, financial_text),
         "valuation_analysis": valuation_text,
-        "peer_comparison": peer_comparison or "No peer comparison table was supplied for this report.",
+        "valuation_assumptions": _format_valuation_assumptions(
+            valuation,
+            current_price=technical_metrics["latest_close"],
+        ),
+        "has_peer_comparison": bool(peer_text.strip()),
+        "peer_comparison": peer_text,
         "scenario_table": _format_markdown_table(valuation),
+        "data_quality_notes": _data_quality_notes(price_history, metrics, valuation),
         "risk_factors": _default_risk_factors(),
         "watchlist": _default_watchlist(),
-        "terms_used": _terms_used(),
         "sources_and_disclaimer": _sources_and_disclaimer(),
         "technical_metrics": technical_metrics,
         "financial_metrics": metrics,
@@ -136,6 +142,9 @@ def generate_report_for_ticker(
         symbol,
         technical_metrics["latest_close"],
         market_cap=profile.get("marketCap"),
+        shares_outstanding=profile.get("sharesOutstanding"),
+        base_pe_multiple=_first_positive(profile.get("forwardPE"), profile.get("trailingPE")) or 22.0,
+        base_ps_multiple=_first_positive(profile.get("priceToSalesTrailing12Months")),
     )
     context = build_report_context(
         ticker=symbol,
@@ -154,6 +163,9 @@ def _build_default_valuation(
     ticker: str,
     current_price: float,
     market_cap: float | None = None,
+    shares_outstanding: float | None = None,
+    base_pe_multiple: float = 22.0,
+    base_ps_multiple: float | None = None,
 ) -> tuple[pd.DataFrame, str]:
     """Build a default valuation table from yfinance metrics when available."""
 
@@ -165,12 +177,14 @@ def _build_default_valuation(
     base_eps = ttm.get("eps") or _fallback_eps(current_price)
     base_revenue = ttm.get("revenue")
     base_free_cash_flow = ttm.get("free_cash_flow")
-    shares_outstanding = _estimate_shares_outstanding(market_cap, current_price)
+    shares_outstanding = shares_outstanding or _estimate_shares_outstanding(market_cap, current_price)
+    if base_ps_multiple is None and market_cap is not None and base_revenue:
+        base_ps_multiple = market_cap / base_revenue
     assumptions = build_scenarios(
         base_forward_eps=base_eps,
-        base_pe_multiple=22.0,
+        base_pe_multiple=base_pe_multiple,
         base_forward_revenue=base_revenue,
-        base_ps_multiple=6.0 if base_revenue else None,
+        base_ps_multiple=base_ps_multiple if base_revenue else None,
         shares_outstanding=shares_outstanding,
     )
     dcf_assumptions = build_dcf_scenarios(
@@ -189,6 +203,17 @@ def _estimate_shares_outstanding(market_cap: float | None, current_price: float)
     if market_cap is None or current_price <= 0:
         return None
     return float(market_cap / current_price)
+
+
+def _first_positive(*values: Any) -> float | None:
+    for value in values:
+        if value is None:
+            continue
+        numeric = pd.to_numeric(value, errors="coerce")
+        if pd.isna(numeric) or float(numeric) <= 0:
+            continue
+        return float(numeric)
+    return None
 
 
 def _fallback_eps(current_price: float) -> float:
@@ -211,6 +236,64 @@ def _one_line_summary(
         f"{ticker} is trading {trend} with "
         f"{technical_metrics['momentum']} short-term momentum. {valuation_summary}"
     )
+
+
+def _executive_summary(
+    ticker: str,
+    technical_metrics: dict[str, Any],
+    financial_metrics: dict[str, float | None],
+    valuation_table: pd.DataFrame,
+) -> str:
+    """Build a concise analyst-style summary without making recommendations."""
+
+    trend_text = (
+        "constructive versus the long-term moving average"
+        if technical_metrics["trend"] == "above_ma200"
+        else "weaker versus the long-term moving average"
+    )
+    revenue_growth = financial_metrics.get("revenue_growth_yoy")
+    net_margin = financial_metrics.get("net_margin")
+    fcf_margin = financial_metrics.get("fcf_margin")
+    valuation_range = _valuation_range_text(valuation_table, technical_metrics["latest_close"])
+
+    return "\n".join(
+        [
+            f"- **Market setup:** {ticker} screens as {trend_text}; RSI is {format_value(technical_metrics['RSI'], 'RSI')} and annualized volatility is {format_value(technical_metrics['annualized_volatility'], 'annualized_volatility')}.",
+            f"- **Fundamentals:** Revenue growth is {format_value(revenue_growth, 'revenue_growth_yoy')}, net margin is {format_value(net_margin, 'net_margin')}, and FCF margin is {format_value(fcf_margin, 'fcf_margin')}.",
+            f"- **Valuation frame:** {valuation_range}",
+        ]
+    )
+
+
+def _valuation_range_text(valuation_table: pd.DataFrame, current_price: float | None) -> str:
+    if valuation_table.empty or "target_price" not in valuation_table:
+        return "Valuation scenarios are unavailable because required inputs are missing."
+
+    prices = pd.to_numeric(valuation_table["target_price"], errors="coerce").dropna()
+    if prices.empty:
+        return "Valuation scenarios are unavailable because required inputs are missing."
+
+    low = float(prices.min())
+    high = float(prices.max())
+    base_price = _scenario_target_price(valuation_table, "Base")
+    base_text = "N/A" if base_price is None else format_value(base_price, "target_price")
+    current_text = "N/A" if current_price is None else format_value(current_price, "latest_close")
+    return (
+        f"The scenario range is {format_value(low, 'target_price')} to {format_value(high, 'target_price')}; "
+        f"the base case is {base_text} versus current price of {current_text}."
+    )
+
+
+def _scenario_target_price(valuation_table: pd.DataFrame, scenario: str) -> float | None:
+    if valuation_table.empty or "scenario" not in valuation_table or "target_price" not in valuation_table:
+        return None
+    rows = valuation_table[valuation_table["scenario"] == scenario]
+    if rows.empty:
+        return None
+    value = pd.to_numeric(rows["target_price"], errors="coerce").dropna()
+    if value.empty:
+        return None
+    return float(value.iloc[0])
 
 
 def _format_company_profile(profile: dict[str, Any]) -> str:
@@ -261,6 +344,29 @@ def _format_markdown_table(frame: pd.DataFrame) -> str:
     if "target_price" in display.columns:
         display["target_price"] = display["target_price"].map(lambda value: format_value(value, "target_price"))
     return _rows_to_markdown(display.to_dict(orient="records"))
+
+
+def _format_valuation_assumptions(frame: pd.DataFrame, current_price: float | None = None) -> str:
+    if frame.empty or "assumed_inputs" not in frame.columns:
+        return "No valuation assumptions were supplied."
+
+    rows = []
+    show_status = "status" in frame.columns and not (frame["status"] == "ok").all()
+    for _, row in frame.iterrows():
+        display_row = {
+            "Scenario": row.get("scenario", "N/A"),
+            "Method": row.get("method", "N/A"),
+            "Target Price": format_value(row.get("target_price"), "target_price"),
+            "Upside/Downside": format_value(
+                calculate_upside_downside(row.get("target_price"), current_price),
+                "upside_downside",
+            ),
+            "Key Assumptions": _compact_assumptions(row.get("assumed_inputs")),
+        }
+        if show_status:
+            display_row["Status"] = row.get("status", "N/A")
+        rows.append(display_row)
+    return _rows_to_markdown(rows)
 
 
 def format_dataframe_markdown(frame: pd.DataFrame) -> str:
@@ -322,7 +428,30 @@ def _default_risk_factors() -> str:
             "- Fundamental risk: revenue growth, margins, or cash flow may deteriorate.",
             "- Valuation risk: market multiples can compress even if fundamentals remain stable.",
             "- Market risk: macro conditions, interest rates, and sentiment can affect price behavior.",
-            "- Data quality risk: public data sources may be delayed, incomplete, or inaccurate.",
+        ]
+    )
+
+
+def _data_quality_notes(
+    price_history: pd.DataFrame,
+    financial_metrics: dict[str, float | None],
+    valuation_table: pd.DataFrame,
+) -> str:
+    """Describe report input coverage and known caveats."""
+
+    price_start = price_history.index.min().date().isoformat() if not price_history.empty else "N/A"
+    price_end = price_history.index.max().date().isoformat() if not price_history.empty else "N/A"
+    available_metrics = sum(value is not None and not pd.isna(value) for value in financial_metrics.values())
+    total_metrics = len(financial_metrics)
+    valuation_ok = 0
+    if not valuation_table.empty and "status" in valuation_table:
+        valuation_ok = int((valuation_table["status"] == "ok").sum())
+
+    return "\n".join(
+        [
+            f"- Price history covers {len(price_history)} rows from {price_start} to {price_end}.",
+            f"- Financial metrics available: {available_metrics}/{total_metrics if total_metrics else 0}.",
+            f"- Valuation scenarios calculated successfully: {valuation_ok}/{len(valuation_table)}.",
         ]
     )
 
@@ -336,26 +465,6 @@ def _default_watchlist() -> str:
             "- Valuation multiple changes versus peers and history.",
         ]
     )
-
-
-def _terms_used() -> str:
-    terms = [
-        "RSI",
-        "MA20",
-        "MA50",
-        "MA200",
-        "Revenue Growth YoY",
-        "Net Margin",
-        "Free Cash Flow",
-        "P/E",
-        "P/S",
-        "DCF",
-        "Bear",
-        "Base",
-        "Bull",
-    ]
-    lines = [f"- {term}: {term_help(term)}" for term in terms if term in GLOSSARY]
-    return "\n".join(lines)
 
 
 def _sources_and_disclaimer() -> str:

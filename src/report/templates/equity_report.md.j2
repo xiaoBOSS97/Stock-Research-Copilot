@@ -2,45 +2,45 @@
 
 Generated at: {{ generated_at }}
 
-## 1. One-line Summary
+## Executive Summary
 
-{{ one_line_summary }}
+{{ executive_summary }}
 
-## 2. Company Overview
+## Company Overview
 
 {{ company_profile }}
 
-## 3. Price Trend
+## Price Trend
 
 {{ price_analysis }}
 
-## 4. Financial Performance
+## Financial Performance
 
 {{ financial_analysis }}
 
-## 5. Valuation Analysis
+## Valuation Analysis
 
-{{ valuation_analysis }}
+### Scenario Details
 
-## 6. Peer Comparison
+{{ valuation_assumptions }}
+
+{% if has_peer_comparison %}
+## Peer Snapshot
 
 {{ peer_comparison }}
+{% endif %}
 
-## 7. Bear / Base / Bull Scenarios
+## Data Quality Notes
 
-{{ scenario_table }}
+{{ data_quality_notes }}
 
-## 8. Key Risks
+## Key Risks
 
 {{ risk_factors }}
 
-## 9. Watchlist
+## Watchlist
 
 {{ watchlist }}
-
-## 10. Terms Used
-
-{{ terms_used }}
 
 ## Data Sources and Disclaimer
 

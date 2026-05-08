@@ -10,6 +10,7 @@ import pandas as pd
 PERCENT_METRICS = {
     "annualized_volatility",
     "max_drawdown",
+    "upside_downside",
     "revenue_growth_yoy",
     "net_income_growth_yoy",
     "revenue_cagr",
@@ -86,6 +87,7 @@ LABEL_OVERRIDES = {
     "revenue_growth_yoy": "Revenue Growth YoY",
     "net_income_growth_yoy": "Net Income Growth YoY",
     "revenue_cagr": "Revenue CAGR",
+    "upside_downside": "Upside/Downside",
 }
 
 
@@ -116,6 +118,18 @@ def format_value(value: Any, metric_name: str | None = None) -> str:
     if name in PRICE_METRICS:
         return f"{numeric_value:,.2f}"
     return f"{numeric_value:,.2f}"
+
+
+def calculate_upside_downside(target_price: Any, current_price: Any) -> float | None:
+    """Return target-price upside/downside versus current price."""
+
+    if target_price is None or current_price is None:
+        return None
+    target = pd.to_numeric(target_price, errors="coerce")
+    current = pd.to_numeric(current_price, errors="coerce")
+    if pd.isna(target) or pd.isna(current) or float(current) <= 0:
+        return None
+    return float(target) / float(current) - 1
 
 
 def format_large_number(value: float) -> str:

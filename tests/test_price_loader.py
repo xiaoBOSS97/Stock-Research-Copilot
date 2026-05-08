@@ -15,6 +15,9 @@ class FakeTicker:
             "industry": "Software",
             "marketCap": 123,
             "currency": "USD",
+            "forwardEps": 5.0,
+            "totalRevenue": 1_000.0,
+            "sharesOutstanding": 10.0,
         }
 
     def history(self, period: str, interval: str, auto_adjust: bool) -> pd.DataFrame:
@@ -62,6 +65,9 @@ def test_get_company_profile_maps_basic_fields(monkeypatch) -> None:
     assert profile["ticker"] == "AAPL"
     assert profile["name"] == "Example Corp"
     assert profile["currency"] == "USD"
+    assert profile["forwardEps"] == pytest.approx(5)
+    assert profile["totalRevenue"] == pytest.approx(1_000)
+    assert profile["sharesOutstanding"] == pytest.approx(10)
 
 
 def test_get_price_history_raises_for_empty_data(monkeypatch) -> None:

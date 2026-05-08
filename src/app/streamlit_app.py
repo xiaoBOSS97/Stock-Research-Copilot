@@ -36,7 +36,7 @@ from src.report.report_generator import (
     render_markdown_report,
     save_report,
 )
-from src.utils.formatting import format_value, humanize_label
+from src.utils.formatting import calculate_upside_downside, format_value, humanize_label
 from src.utils.glossary import term_help
 
 
@@ -45,6 +45,15 @@ RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
 REPORT_DIR = PROJECT_ROOT / "data" / "reports"
 PERIOD_OPTIONS = {"1Y": "1y", "3Y": "3y", "5Y": "5y", "Max": "max"}
 EXAMPLE_TICKERS = ("AAPL", "NVDA", "MSFT", "TSLA")
+REPORT_SCHEMA_VERSION = "upside-downside-v1"
+FALLBACK_VALUATION_DEFAULTS = {
+    "base_eps": 10.0,
+    "base_pe": 22.0,
+    "base_revenue_billions": 400.0,
+    "base_ps": 6.0,
+    "base_free_cash_flow_billions": 100.0,
+    "net_debt_billions": 0.0,
+}
 PERFORMANCE_METRIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Growth", ("revenue_growth_yoy", "net_income_growth_yoy", "revenue_cagr")),
     ("Profitability", ("gross_margin", "operating_margin", "net_margin", "fcf_margin")),
@@ -180,10 +189,96 @@ def statement_row(statement: pd.DataFrame, candidates: tuple[str, ...]) -> pd.Se
     return None
 
 
+def latest_statement_value(statement: pd.DataFrame, candidates: tuple[str, ...]) -> float | None:
+    """Return the newest numeric value for the first matching statement row."""
+
+    row = statement_row(statement, candidates)
+    if row is None:
+        return None
+    values = row.dropna()
+    if values.empty:
+        return None
+    return float(values.iloc[0])
+
+
+def first_numeric(*values: Any, positive: bool = False) -> float | None:
+    """Return the first finite numeric value, optionally requiring it to be positive."""
+
+    for value in values:
+        if value is None:
+            continue
+        numeric = pd.to_numeric(value, errors="coerce")
+        if pd.isna(numeric):
+            continue
+        result = float(numeric)
+        if positive and result <= 0:
+            continue
+        return result
+    return None
+
+
+def to_billions(value: float | None) -> float | None:
+    """Convert an absolute value to billions for sidebar inputs."""
+
+    return None if value is None else value / 1_000_000_000
+
+
+def valuation_input_defaults(
+    profile: dict[str, Any],
+    statements: dict[str, pd.DataFrame],
+    financial_metrics: dict[str, float | None],
+) -> dict[str, float | None]:
+    """Build valuation defaults from live/TTM fields with conservative fallbacks."""
+
+    income = statements.get("income_statement", pd.DataFrame())
+    total_revenue = first_numeric(
+        profile.get("totalRevenue"),
+        latest_statement_value(income, ("Total Revenue", "Operating Revenue")),
+        positive=True,
+    )
+    market_cap = first_numeric(profile.get("marketCap"), positive=True)
+    total_debt = first_numeric(profile.get("totalDebt"))
+    total_cash = first_numeric(profile.get("totalCash"))
+
+    defaults = {
+        "base_eps": first_numeric(
+            profile.get("forwardEps"),
+            profile.get("trailingEps"),
+            positive=True,
+        ),
+        "base_pe": first_numeric(
+            profile.get("forwardPE"),
+            profile.get("trailingPE"),
+            positive=True,
+        ),
+        "base_revenue_billions": to_billions(total_revenue),
+        "base_ps": first_numeric(profile.get("priceToSalesTrailing12Months"), positive=True),
+        "base_free_cash_flow_billions": to_billions(
+            first_numeric(
+                profile.get("freeCashflow"),
+                financial_metrics.get("free_cash_flow"),
+                positive=True,
+            )
+        ),
+        "shares_outstanding": first_numeric(profile.get("sharesOutstanding"), positive=True),
+        "net_debt_billions": (
+            to_billions(total_debt - (total_cash or 0.0)) if total_debt is not None else None
+        ),
+    }
+    if defaults["base_ps"] is None and market_cap is not None and total_revenue:
+        defaults["base_ps"] = market_cap / total_revenue
+
+    return {
+        key: defaults[key] if defaults.get(key) is not None else fallback
+        for key, fallback in FALLBACK_VALUATION_DEFAULTS.items()
+    } | {"shares_outstanding": defaults["shares_outstanding"]}
+
+
 def build_valuation_table(
     method: str,
     latest_close: float,
     market_cap: float | None,
+    shares_outstanding: float | None,
     base_eps: float,
     base_pe: float,
     base_revenue_billions: float | None,
@@ -196,8 +291,7 @@ def build_valuation_table(
 ) -> pd.DataFrame:
     """Build selected valuation scenario table."""
 
-    shares_outstanding = None
-    if market_cap and latest_close > 0:
+    if shares_outstanding is None and market_cap and latest_close > 0:
         shares_outstanding = market_cap / latest_close
 
     assumptions = build_scenarios(
@@ -367,13 +461,32 @@ def render_performance_metrics(metrics: dict[str, float | None]) -> None:
                     column.metric(label, value, help=help_text)
 
 
-def valuation_to_display_frame(valuation_table: pd.DataFrame) -> pd.DataFrame:
+def is_current_report_preview(markdown_report: str | None, ticker: str, report_ticker: str | None, schema_version: str | None) -> bool:
+    """Return whether the cached report preview matches the current report shape."""
+
+    return (
+        bool(markdown_report)
+        and report_ticker == ticker
+        and schema_version == REPORT_SCHEMA_VERSION
+        and "## Executive Summary" in markdown_report
+    )
+
+
+def valuation_to_display_frame(valuation_table: pd.DataFrame, current_price: float | None = None) -> pd.DataFrame:
     """Convert valuation output into a compact dashboard table."""
 
     display = valuation_table.copy()
     if "target_price" in display.columns:
+        display["upside_downside"] = display["target_price"].map(
+            lambda target_price: calculate_upside_downside(target_price, current_price)
+        )
+    if "target_price" in display.columns:
         display["target_price"] = display["target_price"].map(lambda value: format_value(value, "target_price"))
         display = display.rename(columns={"target_price": "Target Price"})
+    if "upside_downside" in display.columns:
+        display["upside_downside"] = display["upside_downside"].map(
+            lambda value: format_value(value, "upside_downside")
+        )
     if "assumed_inputs" in display.columns:
         display = display.drop(columns=["assumed_inputs"])
     display = display.rename(columns={column: humanize_label(column) for column in display.columns})
@@ -389,6 +502,7 @@ def main() -> None:
     st.set_page_config(page_title="Stock Research Copilot", layout="wide")
     st.session_state.setdefault("markdown_report", None)
     st.session_state.setdefault("markdown_report_ticker", None)
+    st.session_state.setdefault("markdown_report_schema_version", None)
 
     with st.sidebar:
         default_ticker = str(settings.get("default_ticker", "AAPL"))
@@ -412,23 +526,61 @@ def main() -> None:
             ["blended", "blended + DCF", "PE", "PS", "DCF"],
             help="Scenario valuation method based on explicit assumptions.",
         )
+
+        with st.spinner(f"Loading {ticker} market data..."):
+            price_data, price_warning = load_price_data(ticker, period, interval)
+            profile, profile_warning = load_profile(ticker)
+        with st.spinner(f"Loading {ticker} financial statements..."):
+            statements, financial_metrics, financial_summary = load_financial_data(ticker)
+
+        valuation_defaults = valuation_input_defaults(profile, statements, financial_metrics)
         with st.expander("Scenario Assumptions"):
-            base_eps = st.number_input("Forward EPS", min_value=0.0, value=10.0, step=0.1, help=term_help("Forward EPS"))
-            base_pe = st.number_input("Base PE", min_value=0.0, value=22.0, step=0.5, help=term_help("P/E"))
+            st.caption("Defaults use live/TTM data when available; missing fields fall back to MVP assumptions.")
+            base_eps = st.number_input(
+                "Forward EPS",
+                min_value=0.0,
+                value=float(valuation_defaults["base_eps"] or FALLBACK_VALUATION_DEFAULTS["base_eps"]),
+                step=0.1,
+                help=term_help("Forward EPS"),
+                key=f"{ticker}_base_eps",
+            )
+            base_pe = st.number_input(
+                "Base PE",
+                min_value=0.0,
+                value=float(valuation_defaults["base_pe"] or FALLBACK_VALUATION_DEFAULTS["base_pe"]),
+                step=0.5,
+                help=term_help("P/E"),
+                key=f"{ticker}_base_pe",
+            )
             base_revenue_billions = st.number_input(
                 "Forward Revenue ($B)",
                 min_value=0.0,
-                value=400.0,
+                value=float(
+                    valuation_defaults["base_revenue_billions"]
+                    or FALLBACK_VALUATION_DEFAULTS["base_revenue_billions"]
+                ),
                 step=5.0,
                 help=term_help("Forward Revenue"),
+                key=f"{ticker}_base_revenue_billions",
             )
-            base_ps = st.number_input("Base P/S", min_value=0.0, value=6.0, step=0.1, help=term_help("P/S"))
+            base_ps = st.number_input(
+                "Base P/S",
+                min_value=0.0,
+                value=float(valuation_defaults["base_ps"] or FALLBACK_VALUATION_DEFAULTS["base_ps"]),
+                step=0.1,
+                help=term_help("P/S"),
+                key=f"{ticker}_base_ps",
+            )
             base_fcf_billions = st.number_input(
                 "Base Free Cash Flow ($B)",
                 min_value=0.0,
-                value=100.0,
+                value=float(
+                    valuation_defaults["base_free_cash_flow_billions"]
+                    or FALLBACK_VALUATION_DEFAULTS["base_free_cash_flow_billions"]
+                ),
                 step=5.0,
                 help=term_help("Base Free Cash Flow"),
+                key=f"{ticker}_base_fcf_billions",
             )
             dcf_growth_rate = st.number_input(
                 "DCF Growth Rate",
@@ -437,6 +589,7 @@ def main() -> None:
                 value=0.05,
                 step=0.005,
                 help=term_help("Growth Rate"),
+                key=f"{ticker}_dcf_growth_rate",
             )
             dcf_discount_rate = st.number_input(
                 "DCF Discount Rate",
@@ -445,6 +598,7 @@ def main() -> None:
                 value=0.10,
                 step=0.005,
                 help=term_help("Discount Rate"),
+                key=f"{ticker}_dcf_discount_rate",
             )
             dcf_terminal_growth_rate = st.number_input(
                 "DCF Terminal Growth",
@@ -453,12 +607,18 @@ def main() -> None:
                 value=0.025,
                 step=0.005,
                 help=term_help("Terminal Growth Rate"),
+                key=f"{ticker}_dcf_terminal_growth_rate",
             )
-            net_debt_billions = st.number_input("Net Debt ($B)", value=0.0, step=5.0, help=term_help("Net Debt"))
-
-    with st.spinner(f"Loading {ticker} market data..."):
-        price_data, price_warning = load_price_data(ticker, period, interval)
-        profile, profile_warning = load_profile(ticker)
+            net_debt_billions = st.number_input(
+                "Net Debt ($B)",
+                value=float(
+                    valuation_defaults["net_debt_billions"]
+                    or FALLBACK_VALUATION_DEFAULTS["net_debt_billions"]
+                ),
+                step=5.0,
+                help=term_help("Net Debt"),
+                key=f"{ticker}_net_debt_billions",
+            )
 
     st.title(f"{profile.get('name') or ticker} ({ticker})")
     st.caption(
@@ -484,13 +644,12 @@ def main() -> None:
         st.caption(DISCLAIMER)
         return
 
-    with st.spinner(f"Loading {ticker} financial statements..."):
-        statements, financial_metrics, financial_summary = load_financial_data(ticker)
     technical_metrics = calculate_technical_metrics(price_data)
     valuation_table = build_valuation_table(
         method=valuation_method,
         latest_close=technical_metrics["latest_close"],
         market_cap=profile.get("marketCap"),
+        shares_outstanding=valuation_defaults.get("shares_outstanding"),
         base_eps=base_eps,
         base_pe=base_pe,
         base_revenue_billions=base_revenue_billions if base_revenue_billions > 0 else None,
@@ -521,7 +680,11 @@ def main() -> None:
 
     st.subheader("Valuation Scenarios")
     st.write(valuation_summary)
-    st.dataframe(valuation_to_display_frame(valuation_table), width="stretch", hide_index=True)
+    st.dataframe(
+        valuation_to_display_frame(valuation_table, current_price=technical_metrics["latest_close"]),
+        width="stretch",
+        hide_index=True,
+    )
 
     peers = parse_peer_input(peer_text)
     st.subheader("Peer Comparison")
@@ -548,10 +711,12 @@ def main() -> None:
             )
             st.session_state["markdown_report"] = render_markdown_report(report_context)
             st.session_state["markdown_report_ticker"] = ticker
+            st.session_state["markdown_report_schema_version"] = REPORT_SCHEMA_VERSION
 
     markdown_report = st.session_state.get("markdown_report")
     report_ticker = st.session_state.get("markdown_report_ticker")
-    if markdown_report and report_ticker == ticker:
+    report_schema_version = st.session_state.get("markdown_report_schema_version")
+    if is_current_report_preview(markdown_report, ticker, report_ticker, report_schema_version):
         st.markdown(markdown_report)
         st.download_button(
             "Download Markdown",
@@ -562,6 +727,8 @@ def main() -> None:
         if st.button("Save Report"):
             output_path = save_report(markdown_report, ticker, REPORT_DIR)
             st.success(f"Saved to {output_path}")
+    elif markdown_report and report_ticker == ticker:
+        st.info("This report preview is from an older format. Generate a fresh preview to see the Executive Summary.")
     elif markdown_report:
         st.info("Generate a fresh report preview for the current ticker.")
     else:

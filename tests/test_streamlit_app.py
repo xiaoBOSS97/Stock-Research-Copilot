@@ -7,11 +7,13 @@ from src.app.streamlit_app import (
     default_period_index,
     format_optional_percent,
     grouped_performance_metric_specs,
+    is_current_report_preview,
     metric_card_specs,
     metrics_to_display_frame,
     performance_metric_specs,
     parse_peer_input,
     statement_row,
+    valuation_input_defaults,
     valuation_to_display_frame,
 )
 
@@ -89,6 +91,13 @@ def test_grouped_performance_metric_specs_groups_core_metrics() -> None:
     assert group_names == ["Growth", "Profitability", "Returns", "Balance Sheet"]
 
 
+def test_is_current_report_preview_requires_executive_summary_and_schema() -> None:
+    assert is_current_report_preview("## Executive Summary\n", "AAPL", "AAPL", "upside-downside-v1")
+    assert not is_current_report_preview("## One-line Summary\n", "AAPL", "AAPL", "upside-downside-v1")
+    assert not is_current_report_preview("## Executive Summary\n", "AAPL", "MSFT", "upside-downside-v1")
+    assert not is_current_report_preview("## Executive Summary\n", "AAPL", "AAPL", "old")
+
+
 def test_format_optional_percent_handles_missing_values() -> None:
     assert format_optional_percent(None) == "N/A"
     assert format_optional_percent(0.1234) == "12.3%"
@@ -108,6 +117,7 @@ def test_build_valuation_table_returns_selected_method() -> None:
         method="PE",
         latest_close=100.0,
         market_cap=1_000.0,
+        shares_outstanding=None,
         base_eps=5.0,
         base_pe=20.0,
         base_revenue_billions=10.0,
@@ -123,6 +133,7 @@ def test_build_valuation_table_supports_dcf() -> None:
         method="DCF",
         latest_close=100.0,
         market_cap=1_000.0,
+        shares_outstanding=None,
         base_eps=5.0,
         base_pe=20.0,
         base_revenue_billions=10.0,
@@ -151,14 +162,61 @@ def test_valuation_to_display_frame_hides_raw_assumptions() -> None:
         method="PE",
         latest_close=100.0,
         market_cap=1_000.0,
+        shares_outstanding=None,
         base_eps=5.0,
         base_pe=20.0,
         base_revenue_billions=10.0,
         base_ps=2.0,
     )
 
-    display = valuation_to_display_frame(table)
+    display = valuation_to_display_frame(table, current_price=100.0)
 
     assert "Assumed Inputs" not in display.columns
     assert "Target Price" in display.columns
+    assert "Upside/Downside" in display.columns
     assert display.loc[1, "Target Price"] == "100.00"
+    assert display.loc[1, "Upside/Downside"] == "0.0%"
+
+
+def test_valuation_input_defaults_use_live_profile_fields() -> None:
+    defaults = valuation_input_defaults(
+        {
+            "forwardEps": 12.0,
+            "forwardPE": 25.0,
+            "totalRevenue": 500_000_000_000,
+            "priceToSalesTrailing12Months": 8.0,
+            "freeCashflow": 120_000_000_000,
+            "sharesOutstanding": 15_000_000_000,
+            "totalDebt": 110_000_000_000,
+            "totalCash": 70_000_000_000,
+        },
+        {},
+        {},
+    )
+
+    assert defaults["base_eps"] == 12.0
+    assert defaults["base_pe"] == 25.0
+    assert defaults["base_revenue_billions"] == 500.0
+    assert defaults["base_ps"] == 8.0
+    assert defaults["base_free_cash_flow_billions"] == 120.0
+    assert defaults["shares_outstanding"] == 15_000_000_000
+    assert defaults["net_debt_billions"] == 40.0
+
+
+def test_valuation_input_defaults_fall_back_to_statements_and_fixed_values() -> None:
+    defaults = valuation_input_defaults(
+        {},
+        {
+            "income_statement": pd.DataFrame(
+                {"2025-12-31": [300_000_000_000]},
+                index=["Total Revenue"],
+            )
+        },
+        {"free_cash_flow": 90_000_000_000},
+    )
+
+    assert defaults["base_eps"] == 10.0
+    assert defaults["base_pe"] == 22.0
+    assert defaults["base_revenue_billions"] == 300.0
+    assert defaults["base_ps"] == 6.0
+    assert defaults["base_free_cash_flow_billions"] == 90.0

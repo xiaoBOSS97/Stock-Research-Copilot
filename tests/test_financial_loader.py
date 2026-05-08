@@ -9,6 +9,7 @@ from src.data_loader import financial_loader
 class FakeTicker:
     def __init__(self, ticker: str) -> None:
         self.ticker = ticker
+        self.info = {}
         self.income_stmt = pd.DataFrame(
             {
                 "2025-12-31": [120.0, 30.0],
@@ -38,6 +39,17 @@ class EmptyTicker(FakeTicker):
         self.income_stmt = pd.DataFrame()
         self.balance_sheet = pd.DataFrame()
         self.cashflow = pd.DataFrame()
+
+
+class InfoTicker(FakeTicker):
+    def __init__(self, ticker: str) -> None:
+        super().__init__(ticker)
+        self.info = {
+            "forwardEps": 5.0,
+            "trailingEps": 4.0,
+            "totalRevenue": 150.0,
+            "freeCashflow": 35.0,
+        }
 
 
 def test_normalize_financials_returns_expected_statement_keys() -> None:
@@ -80,6 +92,16 @@ def test_get_ttm_metrics_maps_latest_values(monkeypatch) -> None:
     assert metrics["revenue"] == pytest.approx(120)
     assert metrics["net_income"] == pytest.approx(30)
     assert metrics["free_cash_flow"] == pytest.approx(25)
+
+
+def test_get_ttm_metrics_prefers_live_info_fields(monkeypatch) -> None:
+    monkeypatch.setattr(financial_loader.yf, "Ticker", InfoTicker)
+
+    metrics = financial_loader.get_ttm_metrics("AAPL")
+
+    assert metrics["eps"] == pytest.approx(5)
+    assert metrics["revenue"] == pytest.approx(150)
+    assert metrics["free_cash_flow"] == pytest.approx(35)
 
 
 def test_financial_statement_cache_roundtrip(tmp_path) -> None:
