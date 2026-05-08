@@ -8,7 +8,9 @@ __pycache__/
 data/raw/*
 data/processed/*
 data/reports/*
+data/transcripts/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/reports/.gitkeep
+!data/transcripts/.gitkeep
 .ipynb_checkpoints/

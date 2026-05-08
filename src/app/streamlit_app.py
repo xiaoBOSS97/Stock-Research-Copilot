@@ -29,12 +29,24 @@ from src.analysis.valuation import (
 )
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements
 from src.data_loader.price_loader import PriceDataError, get_company_profile, get_price_history
+from src.data_loader.transcript_loader import (
+    TranscriptDownloadError,
+    download_and_save_alpha_vantage_transcript,
+    normalize_quarter,
+)
 from src.report.report_generator import (
     DISCLAIMER,
     build_report_context,
     format_dataframe_markdown,
     render_markdown_report,
     save_report,
+)
+from src.rag.transcript_analysis import (
+    analyze_transcript,
+    list_transcript_files,
+    load_transcript_text,
+    save_transcript_text,
+    search_transcript,
 )
 from src.utils.formatting import calculate_upside_downside, format_value, humanize_label
 from src.utils.glossary import term_help
@@ -43,6 +55,7 @@ from src.utils.glossary import term_help
 CONFIG_DIR = PROJECT_ROOT / "config"
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
 REPORT_DIR = PROJECT_ROOT / "data" / "reports"
+TRANSCRIPT_DIR = PROJECT_ROOT / "data" / "transcripts"
 PERIOD_OPTIONS = {"1Y": "1y", "3Y": "3y", "5Y": "5y", "Max": "max"}
 EXAMPLE_TICKERS = ("AAPL", "NVDA", "MSFT", "TSLA")
 REPORT_SCHEMA_VERSION = "upside-downside-v1"
@@ -107,6 +120,13 @@ def load_financial_data(ticker: str) -> tuple[dict[str, pd.DataFrame], dict[str,
         return statements, metrics, generate_financial_summary(metrics)
     except (FinancialDataError, ValueError, TypeError) as exc:
         return {}, {}, f"Financial statement data is currently unavailable: {exc}"
+
+
+@st.cache_data(show_spinner=False)
+def load_saved_transcript(path_text: str) -> str:
+    """Load a saved transcript by path for Streamlit caching."""
+
+    return load_transcript_text(path_text)
 
 
 def parse_peer_input(raw_text: str) -> list[str]:
@@ -461,6 +481,74 @@ def render_performance_metrics(metrics: dict[str, float | None]) -> None:
                     column.metric(label, value, help=help_text)
 
 
+def render_transcript_analysis(ticker: str) -> None:
+    """Render local earnings call transcript upload, analysis, and retrieval."""
+
+    st.subheader("Earnings Call Transcript")
+    quarter = st.text_input(
+        "Fiscal quarter",
+        value="2024Q1",
+        help="Quarter for automatic Alpha Vantage transcript download. Format: YYYYQ#, for example 2024Q1.",
+    )
+    if st.button("Download Transcript"):
+        try:
+            saved_path = download_and_save_alpha_vantage_transcript(
+                ticker,
+                normalize_quarter(quarter),
+                output_dir=TRANSCRIPT_DIR,
+            )
+            st.success(f"Downloaded transcript to {saved_path}")
+            load_saved_transcript.clear()
+        except (TranscriptDownloadError, ValueError) as exc:
+            st.warning(f"Automatic transcript download unavailable: {exc}")
+
+    uploaded_file = st.file_uploader(
+        "Upload transcript",
+        type=["txt", "md"],
+        help="Upload a plain-text or Markdown earnings call transcript for local analysis.",
+    )
+    if uploaded_file is not None:
+        transcript_text = uploaded_file.getvalue().decode("utf-8", errors="replace")
+        saved_path = save_transcript_text(ticker, uploaded_file.name, transcript_text, TRANSCRIPT_DIR)
+        st.success(f"Saved transcript to {saved_path}")
+
+    transcript_files = list_transcript_files(ticker, TRANSCRIPT_DIR)
+    if not transcript_files:
+        st.info("No transcript uploaded yet. Add a .txt or .md earnings call transcript to analyze management commentary.")
+        return
+
+    selected_path = st.selectbox(
+        "Transcript",
+        transcript_files,
+        format_func=lambda path: path.name,
+        help="Saved local transcripts for the current ticker.",
+    )
+    transcript_text = load_saved_transcript(str(selected_path))
+    analysis = analyze_transcript(transcript_text)
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Words", f"{analysis['word_count']:,}")
+    col2.metric("Chunks", str(analysis["chunk_count"]))
+    col3.metric("Tone", analysis["management_tone"])
+
+    st.write("Topic Signals")
+    st.dataframe(analysis["topic_table"], width="stretch", hide_index=True)
+
+    suggested_questions = analysis["key_questions"]
+    default_question = suggested_questions[0] if suggested_questions else "What did management emphasize?"
+    question = st.text_input(
+        "Ask the transcript",
+        value=default_question,
+        help="Keyword retrieval over the uploaded transcript. Results are source passages, not financial advice.",
+    )
+    if question:
+        results = search_transcript(transcript_text, question)
+        if results.empty:
+            st.info("No matching transcript passages found.")
+        else:
+            st.dataframe(results, width="stretch", hide_index=True)
+
+
 def is_current_report_preview(markdown_report: str | None, ticker: str, report_ticker: str | None, schema_version: str | None) -> bool:
     """Return whether the cached report preview matches the current report shape."""
 
@@ -677,6 +765,8 @@ def main() -> None:
         st.plotly_chart(financial_chart, width="stretch")
     if financial_metrics:
         render_performance_metrics(financial_metrics)
+
+    render_transcript_analysis(ticker)
 
     st.subheader("Valuation Scenarios")
     st.write(valuation_summary)

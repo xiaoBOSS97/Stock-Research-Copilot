@@ -15,6 +15,7 @@ This repository is at a stable MVP stage. The implemented v0.1 foundation includ
 - Bear/Base/Bull valuation scenarios using P/E, P/S, DCF, and blended methods
 - Markdown equity research report generation
 - Streamlit dashboard for price trends, financial metrics, valuation scenarios, peers, and report preview
+- local earnings call transcript upload, theme analysis, and transcript passage search
 - unit tests for loaders, analysis modules, valuation, reports, formatting, and dashboard helpers
 
 ## Price Loader
@@ -127,6 +128,7 @@ The Streamlit dashboard lives in `src/app/streamlit_app.py` and includes:
 - revenue, net income, and free cash flow chart when statements are available
 - Bear/Base/Bull valuation table with P/E, P/S, DCF, or blended methods
 - peer comparison table with technical metrics, market cap, revenue growth, and net margin where available
+- earnings call transcript analysis for uploaded `.txt` or `.md` transcripts
 - Markdown report preview, download, and save action
 
 Run it with:
@@ -134,6 +136,27 @@ Run it with:
 ```bash
 uv run streamlit run src/app/streamlit_app.py
 ```
+
+## Earnings Call Transcript Analysis
+
+The transcript analysis module lives in `src/rag/transcript_analysis.py` and currently supports:
+
+- uploading or saving plain-text / Markdown earnings call transcripts under `data/transcripts/{TICKER}/`
+- automatic transcript download from Alpha Vantage when `ALPHA_VANTAGE_API_KEY` is set
+- deterministic transcript chunking and keyword retrieval
+- topic signals for revenue/demand, margins/costs, guidance/outlook, risks/headwinds, and cash flow/capital
+- management tone classification
+- transcript question search that returns source passages
+
+To enable automatic downloads, add an API key to `.env`:
+
+```bash
+ALPHA_VANTAGE_API_KEY=your_key_here
+```
+
+The automatic downloader uses Alpha Vantage's `EARNINGS_CALL_TRANSCRIPT` endpoint with quarters like `2024Q1`. Manual upload remains available when no API key is configured.
+
+This is a local, lightweight RAG-style foundation. It does not require an LLM or embedding database yet.
 
 ## Data Sources
 
