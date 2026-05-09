@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.analysis.valuation import blended_valuation, build_scenarios
 from src.data_loader.financial_loader import FinancialDataError
+from src.preprocessing.filing_parser import FilingSection
 from src.report import report_generator
 
 
@@ -38,6 +39,32 @@ def sample_valuation_table() -> pd.DataFrame:
     return blended_valuation(assumptions)
 
 
+def sample_filing_sections() -> list[FilingSection]:
+    return [
+        FilingSection(
+            section="Business",
+            item="1",
+            text="The company designs consumer technology products and services for global customers.",
+            start_char=0,
+            end_char=80,
+        ),
+        FilingSection(
+            section="Risk Factors",
+            item="1A",
+            text="The company faces supply chain risk, competitive pressure, and regulatory uncertainty.",
+            start_char=81,
+            end_char=170,
+        ),
+        FilingSection(
+            section="Management Discussion and Analysis",
+            item="7",
+            text="Revenue increased because demand remained strong across major product categories.",
+            start_char=171,
+            end_char=260,
+        ),
+    ]
+
+
 def test_build_report_context_contains_required_sections() -> None:
     context = report_generator.build_report_context(
         ticker="AAPL",
@@ -46,6 +73,7 @@ def test_build_report_context_contains_required_sections() -> None:
         financial_metrics={"revenue_growth_yoy": 0.2, "net_margin": 0.25},
         valuation_table=sample_valuation_table(),
         peer_comparison="| Ticker | Latest Close |\n| --- | --- |\n| MSFT | 100.00 |",
+        sec_filing_summary="",
         generated_at=datetime(2026, 5, 6, tzinfo=UTC),
     )
 
@@ -61,6 +89,63 @@ def test_build_report_context_contains_required_sections() -> None:
     assert "Bear" in context["scenario_table"]
     assert context["has_peer_comparison"] is True
     assert "MSFT" in context["peer_comparison"]
+    assert context["has_sec_filing_summary"] is False
+
+
+def test_format_sec_filing_summary_includes_source_backed_excerpts() -> None:
+    summary = report_generator.format_sec_filing_summary(
+        sample_filing_sections(),
+        filing_label="AAPL_10K",
+    )
+
+    assert "source-backed excerpts" in summary
+    assert "business, risk, and management discussion" in summary
+    assert "Risk Factors" in summary
+    assert "AAPL_10K \\| Risk Factors \\| Item 1A" in summary
+    assert "supply chain risk" in summary
+
+
+def test_render_markdown_report_includes_sec_summary_when_supplied() -> None:
+    context = report_generator.build_report_context(
+        ticker="AAPL",
+        price_history=sample_price_history(),
+        company_profile=sample_profile(),
+        valuation_table=sample_valuation_table(),
+        sec_filing_summary=report_generator.format_sec_filing_summary(sample_filing_sections()),
+    )
+
+    markdown = report_generator.render_markdown_report(context)
+
+    assert "## SEC Filing Summary" in markdown
+    assert "Management Discussion and Analysis" in markdown
+
+
+def test_render_markdown_report_includes_market_implied_expectations_when_supplied() -> None:
+    context = report_generator.build_report_context(
+        ticker="AAPL",
+        price_history=sample_price_history(),
+        company_profile=sample_profile(),
+        valuation_table=sample_valuation_table(),
+        market_implied_summary="Current price implies 5.0% annual FCF growth.",
+        market_implied_table=pd.DataFrame(
+            [
+                {
+                    "scenario": "Base",
+                    "target_price": 220.0,
+                    "price_gap": 10.0,
+                    "upside_downside": 0.05,
+                    "position": "below scenario",
+                }
+            ]
+        ),
+        sec_filing_summary="",
+    )
+
+    markdown = report_generator.render_markdown_report(context)
+
+    assert "## Market-Implied Expectations" in markdown
+    assert "Current price implies 5.0% annual FCF growth." in markdown
+    assert "below scenario" in markdown
 
 
 def test_render_markdown_report_includes_template_sections() -> None:
@@ -69,6 +154,7 @@ def test_render_markdown_report_includes_template_sections() -> None:
         price_history=sample_price_history(),
         company_profile=sample_profile(),
         valuation_table=sample_valuation_table(),
+        sec_filing_summary="",
     )
 
     markdown = report_generator.render_markdown_report(context)
@@ -76,7 +162,10 @@ def test_render_markdown_report_includes_template_sections() -> None:
     assert "# Apple Inc. (AAPL) Equity Research Report" in markdown
     assert "## Executive Summary" in markdown
     assert "### Scenario Details" in markdown
+    assert "Scenario valuation range" in markdown
+    assert "## Market-Implied Expectations" not in markdown
     assert "## Data Quality Notes" in markdown
+    assert "## SEC Filing Summary" not in markdown
     assert "## Terms Used" not in markdown
     assert "## Bear / Base / Bull Scenarios" not in markdown
     assert "## Peer Snapshot" not in markdown
@@ -90,6 +179,7 @@ def test_render_markdown_report_includes_peer_snapshot_when_supplied() -> None:
         company_profile=sample_profile(),
         valuation_table=sample_valuation_table(),
         peer_comparison="| Ticker | Latest Close |\n| --- | --- |\n| MSFT | 100.00 |",
+        sec_filing_summary="",
     )
 
     markdown = report_generator.render_markdown_report(context)

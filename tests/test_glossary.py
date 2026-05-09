@@ -19,5 +19,5 @@ def test_abbr_adds_hover_title() -> None:
 
 
 def test_glossary_contains_core_terms() -> None:
-    for term in ["RSI", "P/E", "P/S", "DCF", "Bear", "Base", "Bull", "Net Income Growth YoY"]:
+    for term in ["RSI", "P/E", "P/S", "DCF", "Bear", "Base", "Bull", "Net Income Growth YoY", "Implied FCF Growth"]:
         assert term in GLOSSARY

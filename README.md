@@ -16,6 +16,11 @@ This repository is at a stable MVP stage. The implemented v0.1 foundation includ
 - Markdown equity research report generation
 - Streamlit dashboard for price trends, financial metrics, valuation scenarios, peers, and report preview
 - local earnings call transcript upload, theme analysis, and transcript passage search
+- SEC EDGAR ticker-to-CIK lookup, recent filing metadata retrieval, and filing download helpers
+- SEC filing HTML/text parsing into Business, Risk Factors, MD&A, and other source sections
+- local filing RAG-style Q&A with cited source passages and safe refusal when no source is found
+- optional SEC Filing Summary section in generated reports when parsed filings are available
+- market-implied expectation analysis for reverse-solved DCF growth and scenario deviation
 - unit tests for loaders, analysis modules, valuation, reports, formatting, and dashboard helpers
 
 ## Price Loader
@@ -158,12 +163,62 @@ The automatic downloader uses Alpha Vantage's `EARNINGS_CALL_TRANSCRIPT` endpoin
 
 This is a local, lightweight RAG-style foundation. It does not require an LLM or embedding database yet.
 
+## SEC Filing Loader
+
+The SEC filing loader lives in `src/data_loader/sec_loader.py` and currently supports:
+
+- `lookup_cik(ticker)` using the SEC ticker mapping
+- `get_recent_filings(ticker, forms=("10-K", "10-Q", "8-K"), limit=10)`
+- `get_latest_filing(ticker, form="10-K")`
+- `download_filing(filing)` and `download_latest_filing(ticker, form="10-K")`
+
+SEC filings are saved under `data/filings/{TICKER}/` when downloaded. Set a descriptive SEC user agent in `.env`:
+
+```bash
+SEC_USER_AGENT=StockResearchCopilot/0.1 your.email@example.com
+```
+
+## Filing Parser
+
+The filing parser lives in `src/preprocessing/filing_parser.py` and currently supports:
+
+- `load_filing_text(path)` for saved `.htm`, `.html`, or `.txt` filings
+- `extract_filing_sections(text)` for major SEC items such as Business, Risk Factors, MD&A, and Financial Statements
+- `chunk_filing_sections(sections, ticker=..., filing_type=..., filing_date=...)`
+- `save_parsed_filing(sections, ticker=..., accession_number=...)`
+
+Parsed filing section JSON is saved under `data/processed/filings/{TICKER}/`. This is the foundation for filing-based RAG Q&A and source-backed report sections.
+
+## Filing Q&A
+
+The filing Q&A module lives in `src/rag/filing_qa.py` and currently supports:
+
+- listing and loading parsed filing section JSON files
+- keyword retrieval over parsed filing chunks
+- answers that cite source passages like `[1]`
+- safe refusal when no relevant filing source is found
+
+The Streamlit dashboard includes an SEC Filing Q&A section where you can download and parse the latest 10-K, 10-Q, or 8-K, then ask questions against the parsed filing.
+
+Generated Markdown reports automatically include an **SEC Filing Summary** section when a parsed filing exists for the ticker.
+
+## Market-Implied Expectations
+
+The market-implied expectations module lives in `src/analysis/market_implied_expectations.py` and currently supports:
+
+- reverse-solving the annual free cash flow growth rate implied by the current share price in the simplified DCF model
+- comparing current price against Bear/Base/Bull valuation scenarios
+- dashboard and report summaries that separate model assumptions from market-implied outputs
+
+This is not a prediction. It answers: "what growth rate would make the current price approximately fit these DCF assumptions?"
+
 ## Data Sources
 
 The MVP is designed to run without paid APIs. It uses public data sources such as:
 
 - Yahoo Finance data through `yfinance`
 - SEC EDGAR APIs for future official filing and company facts support
+- SEC EDGAR filing metadata and filing primary documents
 
 Network data may be incomplete, delayed, unavailable, or shaped differently across companies.
 
@@ -173,7 +228,7 @@ Network data may be incomplete, delayed, unavailable, or shaped differently acro
 - Price data is cached to `data/raw` and financial statements are cached to `data/processed` when available.
 - P/E, P/S, and DCF valuation assumptions are user-controlled scenario inputs, not predictions.
 - Peer comparison uses available public data and may show `N/A` when financial data is missing.
-- SEC EDGAR support, richer peer selection, and PDF export are planned future extensions.
+- embedding-based filing RAG, richer peer selection, and PDF export are planned future extensions.
 
 ## Disclaimer
 

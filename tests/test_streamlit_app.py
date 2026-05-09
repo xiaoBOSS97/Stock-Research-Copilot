@@ -10,6 +10,8 @@ from src.app.streamlit_app import (
     is_current_report_preview,
     metric_card_specs,
     metrics_to_display_frame,
+    market_implied_to_display_frame,
+    market_implied_status_caption,
     performance_metric_specs,
     parse_peer_input,
     statement_row,
@@ -92,9 +94,9 @@ def test_grouped_performance_metric_specs_groups_core_metrics() -> None:
 
 
 def test_is_current_report_preview_requires_executive_summary_and_schema() -> None:
-    assert is_current_report_preview("## Executive Summary\n", "AAPL", "AAPL", "upside-downside-v1")
-    assert not is_current_report_preview("## One-line Summary\n", "AAPL", "AAPL", "upside-downside-v1")
-    assert not is_current_report_preview("## Executive Summary\n", "AAPL", "MSFT", "upside-downside-v1")
+    assert is_current_report_preview("## Executive Summary\n", "AAPL", "AAPL", "market-implied-v1")
+    assert not is_current_report_preview("## One-line Summary\n", "AAPL", "AAPL", "market-implied-v1")
+    assert not is_current_report_preview("## Executive Summary\n", "AAPL", "MSFT", "market-implied-v1")
     assert not is_current_report_preview("## Executive Summary\n", "AAPL", "AAPL", "old")
 
 
@@ -176,6 +178,32 @@ def test_valuation_to_display_frame_hides_raw_assumptions() -> None:
     assert "Upside/Downside" in display.columns
     assert display.loc[1, "Target Price"] == "100.00"
     assert display.loc[1, "Upside/Downside"] == "0.0%"
+
+
+def test_market_implied_to_display_frame_formats_values() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "scenario": "Base",
+                "target_price": 120.0,
+                "price_gap": 20.0,
+                "upside_downside": 0.2,
+                "position": "below scenario",
+            }
+        ]
+    )
+
+    display = market_implied_to_display_frame(frame)
+
+    assert display.loc[0, "Target Price"] == "120.00"
+    assert display.loc[0, "Price Gap"] == "20.00"
+    assert display.loc[0, "Upside/Downside"] == "20.0%"
+
+
+def test_market_implied_status_caption_explains_status() -> None:
+    assert "Solved" in market_implied_status_caption("ok")
+    assert "outside" in market_implied_status_caption("out_of_bounds")
+    assert "Solver needs" in market_implied_status_caption("insufficient_data")
 
 
 def test_valuation_input_defaults_use_live_profile_fields() -> None:

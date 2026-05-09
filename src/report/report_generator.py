@@ -11,6 +11,11 @@ import pandas as pd
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.analysis.financial_ratios import calculate_financial_metrics, generate_financial_summary
+from src.analysis.market_implied_expectations import (
+    ImpliedGrowthResult,
+    scenario_price_deviation,
+    summarize_market_implied_expectations,
+)
 from src.analysis.technical_analysis import calculate_technical_metrics, generate_technical_summary
 from src.analysis.valuation import (
     blended_valuation_with_dcf,
@@ -20,6 +25,8 @@ from src.analysis.valuation import (
 )
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements, get_ttm_metrics
 from src.data_loader.price_loader import get_company_profile, get_price_history
+from src.preprocessing.filing_parser import DEFAULT_PARSED_FILING_DIR, FilingSection
+from src.rag.filing_qa import list_parsed_filing_files, load_parsed_filing_sections
 from src.utils.formatting import calculate_upside_downside, format_value, humanize_label
 
 
@@ -40,7 +47,11 @@ def build_report_context(
     financial_summary: str | None = None,
     valuation_table: pd.DataFrame | None = None,
     valuation_summary: str | None = None,
+    market_implied_summary: str | None = None,
+    market_implied_table: pd.DataFrame | None = None,
+    implied_growth: dict[str, Any] | None = None,
     peer_comparison: str | None = None,
+    sec_filing_summary: str | None = None,
     generated_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the Jinja context for a Markdown equity report."""
@@ -59,6 +70,16 @@ def build_report_context(
     metrics = financial_metrics or {}
     financial_text = financial_summary or generate_financial_summary(metrics)
     peer_text = peer_comparison or ""
+    filing_summary = sec_filing_summary
+    if filing_summary is None:
+        filing_summary = latest_sec_filing_summary(symbol)
+    market_text, market_table = _market_implied_report_inputs(
+        valuation,
+        technical_metrics["latest_close"],
+        market_implied_summary,
+        market_implied_table,
+        implied_growth,
+    )
 
     return {
         "ticker": symbol,
@@ -74,8 +95,13 @@ def build_report_context(
             valuation,
             current_price=technical_metrics["latest_close"],
         ),
+        "has_market_implied": bool(market_text.strip() or not market_table.empty),
+        "market_implied_summary": market_text,
+        "market_implied_table": _format_market_implied_table(market_table),
         "has_peer_comparison": bool(peer_text.strip()),
         "peer_comparison": peer_text,
+        "has_sec_filing_summary": bool(filing_summary.strip()),
+        "sec_filing_summary": filing_summary,
         "scenario_table": _format_markdown_table(valuation),
         "data_quality_notes": _data_quality_notes(price_history, metrics, valuation),
         "risk_factors": _default_risk_factors(),
@@ -369,12 +395,131 @@ def _format_valuation_assumptions(frame: pd.DataFrame, current_price: float | No
     return _rows_to_markdown(rows)
 
 
+def _market_implied_report_inputs(
+    valuation_table: pd.DataFrame,
+    current_price: float | None,
+    market_implied_summary: str | None,
+    market_implied_table: pd.DataFrame | None,
+    implied_growth: dict[str, Any] | None,
+) -> tuple[str, pd.DataFrame]:
+    if market_implied_summary is None and market_implied_table is None and not implied_growth:
+        return "", pd.DataFrame()
+
+    table = (
+        market_implied_table
+        if market_implied_table is not None
+        else scenario_price_deviation(valuation_table, current_price)
+    )
+    if market_implied_summary is not None:
+        return market_implied_summary, table
+
+    growth_result = _implied_growth_from_dict(implied_growth)
+    if growth_result is None:
+        return "", table
+    return summarize_market_implied_expectations(growth_result, table), table
+
+
+def _implied_growth_from_dict(value: dict[str, Any] | None) -> ImpliedGrowthResult | None:
+    if not value:
+        return None
+    return ImpliedGrowthResult(
+        implied_growth_rate=value.get("implied_growth_rate"),
+        current_price=value.get("current_price"),
+        model_price=value.get("model_price"),
+        status=str(value.get("status") or "insufficient_data"),
+        message=str(value.get("message") or ""),
+    )
+
+
+def _format_market_implied_table(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return "N/A"
+    rows = []
+    for _, row in frame.iterrows():
+        rows.append(
+            {
+                "Scenario": row.get("scenario", "N/A"),
+                "Target Price": format_value(row.get("target_price"), "target_price"),
+                "Price Gap": format_value(row.get("price_gap"), "price_gap"),
+                "Upside/Downside": format_value(row.get("upside_downside"), "upside_downside"),
+                "Position": row.get("position", "N/A"),
+            }
+        )
+    return _rows_to_markdown(rows)
+
+
+def latest_sec_filing_summary(
+    ticker: str,
+    parsed_dir: str | Path = DEFAULT_PARSED_FILING_DIR,
+) -> str:
+    """Return a report-ready summary of the latest locally parsed SEC filing."""
+
+    files = list_parsed_filing_files(ticker, parsed_dir)
+    if not files:
+        return ""
+    sections = load_parsed_filing_sections(files[0])
+    return format_sec_filing_summary(sections, filing_label=files[0].stem)
+
+
+def format_sec_filing_summary(
+    sections: list[FilingSection],
+    *,
+    filing_label: str = "Latest parsed filing",
+) -> str:
+    """Format parsed SEC filing sections into a source-backed report summary."""
+
+    if not sections:
+        return ""
+
+    priority_sections = [
+        "Business",
+        "Risk Factors",
+        "Management Discussion and Analysis",
+        "Market Risk",
+        "Legal Proceedings",
+    ]
+    section_map = {section.section: section for section in sections}
+    rows = []
+    for section_name in priority_sections:
+        section = section_map.get(section_name)
+        if section is None or not section.text.strip():
+            continue
+        source_ref = f"{filing_label} | {section.section}"
+        if section.item:
+            source_ref += f" | Item {section.item}"
+        rows.append(
+            {
+                "Section": section.section,
+                "Source": source_ref,
+                "Key Excerpt": _compact_excerpt(section.text),
+            }
+        )
+
+    if not rows:
+        return ""
+    return "\n".join(
+        [
+            "The table below highlights source-backed excerpts from locally parsed SEC filing sections.",
+            "Use these excerpts as evidence for business, risk, and management discussion context.",
+            "",
+            _rows_to_markdown(rows),
+        ]
+    )
+
+
 def format_dataframe_markdown(frame: pd.DataFrame) -> str:
     """Format a DataFrame as a lightweight Markdown table."""
 
     if frame.empty:
         return "N/A"
     return _rows_to_markdown(frame.to_dict(orient="records"))
+
+
+def _compact_excerpt(text: str, limit: int = 300) -> str:
+    compacted = " ".join(str(text).split())
+    if len(compacted) <= limit:
+        return compacted
+    return compacted[: limit - 3].rstrip() + "..."
 
 
 def _rows_to_markdown(rows: list[dict[str, Any]]) -> str:
@@ -425,9 +570,9 @@ def _empty_scenario_table() -> pd.DataFrame:
 def _default_risk_factors() -> str:
     return "\n".join(
         [
-            "- Fundamental risk: revenue growth, margins, or cash flow may deteriorate.",
-            "- Valuation risk: market multiples can compress even if fundamentals remain stable.",
-            "- Market risk: macro conditions, interest rates, and sentiment can affect price behavior.",
+            "- Fundamental risk: revenue growth, margins, or free cash flow may deteriorate versus the modeled assumptions.",
+            "- Valuation risk: market multiples can compress even when operating performance remains stable.",
+            "- Market risk: macro conditions, interest rates, liquidity, and sentiment can affect price behavior.",
         ]
     )
 
@@ -459,10 +604,10 @@ def _data_quality_notes(
 def _default_watchlist() -> str:
     return "\n".join(
         [
-            "- Upcoming earnings and management guidance.",
-            "- Revenue growth and margin trend changes.",
-            "- Free cash flow conversion.",
-            "- Valuation multiple changes versus peers and history.",
+            "- Upcoming earnings, guidance updates, and management tone changes.",
+            "- Revenue growth, margin trend, and free cash flow conversion.",
+            "- New SEC filings, especially changes in risk factors or MD&A language.",
+            "- Valuation multiple changes versus peers, history, and scenario assumptions.",
         ]
     )
 
@@ -472,6 +617,8 @@ def _sources_and_disclaimer() -> str:
         [
             "- Price data: Yahoo Finance via yfinance.",
             "- Financial data: Yahoo Finance via yfinance when available.",
+            "- SEC filing excerpts: locally downloaded and parsed public EDGAR filings when available.",
+            "- Model outputs: scenario and DCF calculations from user-visible assumptions.",
             f"- Disclaimer: {DISCLAIMER}",
         ]
     )

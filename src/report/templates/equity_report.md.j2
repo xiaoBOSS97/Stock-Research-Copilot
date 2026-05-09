@@ -18,11 +18,27 @@ Generated at: {{ generated_at }}
 
 {{ financial_analysis }}
 
+{% if has_sec_filing_summary %}
+## SEC Filing Summary
+
+{{ sec_filing_summary }}
+{% endif %}
+
 ## Valuation Analysis
+
+{{ valuation_analysis }}
 
 ### Scenario Details
 
 {{ valuation_assumptions }}
+
+{% if has_market_implied %}
+## Market-Implied Expectations
+
+{{ market_implied_summary }}
+
+{{ market_implied_table }}
+{% endif %}
 
 {% if has_peer_comparison %}
 ## Peer Snapshot

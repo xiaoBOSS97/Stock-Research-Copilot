@@ -7,10 +7,15 @@ __pycache__/
 .env
 data/raw/*
 data/processed/*
+!data/processed/filings/
+data/processed/filings/*
 data/reports/*
 data/transcripts/*
+data/filings/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/processed/filings/.gitkeep
 !data/reports/.gitkeep
 !data/transcripts/.gitkeep
+!data/filings/.gitkeep
 .ipynb_checkpoints/

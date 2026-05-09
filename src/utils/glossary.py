@@ -49,6 +49,7 @@ GLOSSARY: dict[str, str] = {
     "Enterprise Value": "Value of the operating business before subtracting net debt.",
     "Equity Value": "Enterprise value minus net debt.",
     "Net Debt": "Debt minus cash and equivalents.",
+    "Implied FCF Growth": "The annual free cash flow growth rate that makes the simplified DCF model approximately match the current share price.",
     "Bear": "Pessimistic scenario assumption set.",
     "Base": "Middle-case scenario assumption set.",
     "Bull": "Optimistic scenario assumption set.",

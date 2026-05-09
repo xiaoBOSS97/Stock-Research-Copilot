@@ -24,6 +24,7 @@ PERCENT_METRICS = {
     "growth_rate",
     "discount_rate",
     "terminal_growth_rate",
+    "implied_growth_rate",
 }
 LARGE_CURRENCY_METRICS = {
     "marketCap",
@@ -88,6 +89,9 @@ LABEL_OVERRIDES = {
     "net_income_growth_yoy": "Net Income Growth YoY",
     "revenue_cagr": "Revenue CAGR",
     "upside_downside": "Upside/Downside",
+    "implied_growth_rate": "Implied FCF Growth",
+    "price_gap": "Price Gap",
+    "position": "Position",
 }
 
 

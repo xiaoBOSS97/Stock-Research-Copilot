@@ -16,6 +16,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.analysis.financial_ratios import calculate_financial_metrics, generate_financial_summary
+from src.analysis.market_implied_expectations import (
+    scenario_price_deviation,
+    solve_implied_fcf_growth,
+    summarize_market_implied_expectations,
+)
 from src.analysis.technical_analysis import add_technical_indicators, calculate_technical_metrics
 from src.analysis.valuation import (
     blended_valuation,
@@ -29,18 +34,22 @@ from src.analysis.valuation import (
 )
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements
 from src.data_loader.price_loader import PriceDataError, get_company_profile, get_price_history
+from src.data_loader.sec_loader import SecFilingError, download_filing, get_latest_filing
 from src.data_loader.transcript_loader import (
     TranscriptDownloadError,
     download_and_save_alpha_vantage_transcript,
     normalize_quarter,
 )
+from src.preprocessing.filing_parser import parse_filing_file, save_parsed_filing
 from src.report.report_generator import (
     DISCLAIMER,
     build_report_context,
     format_dataframe_markdown,
+    latest_sec_filing_summary,
     render_markdown_report,
     save_report,
 )
+from src.rag.filing_qa import answer_filing_question, list_parsed_filing_files, load_parsed_filing_sections
 from src.rag.transcript_analysis import (
     analyze_transcript,
     list_transcript_files,
@@ -56,9 +65,11 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
 REPORT_DIR = PROJECT_ROOT / "data" / "reports"
 TRANSCRIPT_DIR = PROJECT_ROOT / "data" / "transcripts"
+FILING_DIR = PROJECT_ROOT / "data" / "filings"
+PARSED_FILING_DIR = PROJECT_ROOT / "data" / "processed" / "filings"
 PERIOD_OPTIONS = {"1Y": "1y", "3Y": "3y", "5Y": "5y", "Max": "max"}
 EXAMPLE_TICKERS = ("AAPL", "NVDA", "MSFT", "TSLA")
-REPORT_SCHEMA_VERSION = "upside-downside-v1"
+REPORT_SCHEMA_VERSION = "market-implied-v1"
 FALLBACK_VALUATION_DEFAULTS = {
     "base_eps": 10.0,
     "base_pe": 22.0,
@@ -73,6 +84,28 @@ PERFORMANCE_METRIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Returns", ("roe", "roa", "roic")),
     ("Balance Sheet", ("debt_to_equity", "current_ratio", "interest_coverage", "free_cash_flow")),
 )
+
+
+def apply_dashboard_style() -> None:
+    """Apply small dashboard polish without fighting Streamlit's native controls."""
+
+    st.markdown(
+        """
+        <style>
+        .block-container { padding-top: 2.2rem; padding-bottom: 3rem; }
+        h1 { margin-bottom: 0.25rem; }
+        h2, h3 { margin-top: 1.6rem; }
+        div[data-testid="stMetric"] { padding: 0.25rem 0; }
+        div[data-testid="stMetricLabel"] > div { font-weight: 650; }
+        .src-caption {
+            color: #9ca3af;
+            font-size: 0.92rem;
+            margin: -0.25rem 0 0.75rem 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -127,6 +160,13 @@ def load_saved_transcript(path_text: str) -> str:
     """Load a saved transcript by path for Streamlit caching."""
 
     return load_transcript_text(path_text)
+
+
+@st.cache_data(show_spinner=False)
+def load_saved_filing_sections(path_text: str):
+    """Load parsed filing sections by path for Streamlit caching."""
+
+    return load_parsed_filing_sections(path_text)
 
 
 def parse_peer_input(raw_text: str) -> list[str]:
@@ -484,7 +524,8 @@ def render_performance_metrics(metrics: dict[str, float | None]) -> None:
 def render_transcript_analysis(ticker: str) -> None:
     """Render local earnings call transcript upload, analysis, and retrieval."""
 
-    st.subheader("Earnings Call Transcript")
+    st.markdown("#### Earnings Call Transcript")
+    st.caption("Use management commentary to check demand, margin, guidance, and risk language.")
     quarter = st.text_input(
         "Fiscal quarter",
         value="2024Q1",
@@ -531,7 +572,7 @@ def render_transcript_analysis(ticker: str) -> None:
     col2.metric("Chunks", str(analysis["chunk_count"]))
     col3.metric("Tone", analysis["management_tone"])
 
-    st.write("Topic Signals")
+    st.markdown("##### Topic Signals")
     st.dataframe(analysis["topic_table"], width="stretch", hide_index=True)
 
     suggested_questions = analysis["key_questions"]
@@ -547,6 +588,79 @@ def render_transcript_analysis(ticker: str) -> None:
             st.info("No matching transcript passages found.")
         else:
             st.dataframe(results, width="stretch", hide_index=True)
+
+
+def render_filing_qa(ticker: str) -> None:
+    """Render SEC filing download, parse, and source-grounded Q&A."""
+
+    st.markdown("#### SEC Filing Q&A")
+    st.caption("Download a public SEC filing, parse the core sections, then ask questions against cited passages.")
+    selected_form = st.selectbox(
+        "Filing type",
+        ["10-K", "10-Q", "8-K"],
+        help="SEC filing type to download and parse. 10-K is annual, 10-Q is quarterly, 8-K is a major event filing.",
+    )
+    if st.button("Download and Parse Latest Filing"):
+        try:
+            filing = get_latest_filing(ticker, form=selected_form)
+            filing_path = download_filing(filing, output_dir=FILING_DIR)
+            sections = parse_filing_file(filing_path)
+            parsed_path = save_parsed_filing(
+                sections,
+                ticker=ticker,
+                accession_number=filing.accession_number,
+                output_dir=PARSED_FILING_DIR,
+            )
+            load_saved_filing_sections.clear()
+            st.success(f"Parsed {selected_form} filing to {parsed_path}")
+        except (SecFilingError, ValueError) as exc:
+            st.warning(f"SEC filing download or parsing unavailable: {exc}")
+
+    parsed_files = list_parsed_filing_files(ticker, PARSED_FILING_DIR)
+    if not parsed_files:
+        st.info("No parsed SEC filing yet. Download and parse a filing to ask source-grounded questions.")
+        return
+
+    selected_path = st.selectbox(
+        "Parsed filing",
+        parsed_files,
+        format_func=lambda path: path.name,
+        help="Parsed local SEC filing sections for the current ticker.",
+    )
+    sections = load_saved_filing_sections(str(selected_path))
+    st.caption(f"{len(sections)} parsed sections available.")
+
+    question = st.text_input(
+        "Ask the filing",
+        value="What are the main risk factors?",
+        help="Retrieves passages from the parsed SEC filing and answers only from those sources.",
+    )
+    if not question:
+        return
+
+    result = answer_filing_question(sections, question, ticker=ticker, filing_type=selected_form)
+    if result.refused:
+        st.info(result.answer)
+        return
+
+    st.markdown(result.answer)
+    st.dataframe(result.sources_frame(), width="stretch", hide_index=True)
+
+
+def render_source_research(ticker: str) -> None:
+    """Group source-backed qualitative research tools."""
+
+    st.subheader("Source Research")
+    st.markdown(
+        '<div class="src-caption">Qualitative evidence from transcripts and SEC filings. '
+        "These sections are retrieval aids, not standalone conclusions.</div>",
+        unsafe_allow_html=True,
+    )
+    transcript_tab, filing_tab = st.tabs(["Earnings Call", "SEC Filing"])
+    with transcript_tab:
+        render_transcript_analysis(ticker)
+    with filing_tab:
+        render_filing_qa(ticker)
 
 
 def is_current_report_preview(markdown_report: str | None, ticker: str, report_ticker: str | None, schema_version: str | None) -> bool:
@@ -581,6 +695,30 @@ def valuation_to_display_frame(valuation_table: pd.DataFrame, current_price: flo
     return display
 
 
+def market_implied_to_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Format market-implied scenario deviation rows for the dashboard."""
+
+    display = frame.copy()
+    for column in ("target_price", "price_gap"):
+        if column in display.columns:
+            display[column] = display[column].map(lambda value: format_value(value, column))
+    if "upside_downside" in display.columns:
+        display["upside_downside"] = display["upside_downside"].map(
+            lambda value: format_value(value, "upside_downside")
+        )
+    return display.rename(columns={column: humanize_label(column) for column in display.columns})
+
+
+def market_implied_status_caption(status: str) -> str:
+    """Return short UI copy for the implied growth solver status."""
+
+    if status == "ok":
+        return "Solved within the configured DCF growth range."
+    if status == "out_of_bounds":
+        return "Current price sits outside the configured growth bounds."
+    return "Solver needs positive current price, FCF, discount rate, terminal growth, and share count."
+
+
 def main() -> None:
     """Render the Streamlit dashboard."""
 
@@ -588,6 +726,7 @@ def main() -> None:
     peers_config = load_yaml(CONFIG_DIR / "peers.yaml")
 
     st.set_page_config(page_title="Stock Research Copilot", layout="wide")
+    apply_dashboard_style()
     st.session_state.setdefault("markdown_report", None)
     st.session_state.setdefault("markdown_report_ticker", None)
     st.session_state.setdefault("markdown_report_schema_version", None)
@@ -610,7 +749,7 @@ def main() -> None:
         default_peers = ", ".join(peers_config.get(ticker, []))
         peer_text = st.text_input("Peers", value=default_peers, help="Comparable tickers for peer metrics.")
         valuation_method = st.selectbox(
-            "Valuation",
+            "Valuation Method",
             ["blended", "blended + DCF", "PE", "PS", "DCF"],
             help="Scenario valuation method based on explicit assumptions.",
         )
@@ -633,7 +772,7 @@ def main() -> None:
                 key=f"{ticker}_base_eps",
             )
             base_pe = st.number_input(
-                "Base PE",
+                "Base P/E",
                 min_value=0.0,
                 value=float(valuation_defaults["base_pe"] or FALLBACK_VALUATION_DEFAULTS["base_pe"]),
                 step=0.5,
@@ -752,13 +891,31 @@ def main() -> None:
         valuation_table,
         current_price=technical_metrics["latest_close"],
     )
+    implied_growth = solve_implied_fcf_growth(
+        current_price=technical_metrics["latest_close"],
+        base_free_cash_flow=base_fcf_billions * 1_000_000_000 if base_fcf_billions > 0 else None,
+        discount_rate=dcf_discount_rate,
+        terminal_growth_rate=dcf_terminal_growth_rate,
+        shares_outstanding=valuation_defaults.get("shares_outstanding")
+        or (
+            profile.get("marketCap") / technical_metrics["latest_close"]
+            if profile.get("marketCap") and technical_metrics["latest_close"] > 0
+            else None
+        ),
+        net_debt=net_debt_billions * 1_000_000_000,
+    )
+    scenario_deviation = scenario_price_deviation(valuation_table, technical_metrics["latest_close"])
+    market_implied_summary = summarize_market_implied_expectations(implied_growth, scenario_deviation)
 
     render_metric_cards(technical_metrics, financial_metrics)
+    st.divider()
 
     st.subheader("Price Trend")
+    st.caption("Price history with moving averages for trend context.")
     st.plotly_chart(build_price_chart(price_data), width="stretch")
 
     st.subheader("Financial Performance")
+    st.caption("Core growth, profitability, return, leverage, and cash flow metrics from available statements.")
     st.write(financial_summary)
     financial_chart = build_financial_charts(statements)
     if financial_chart is not None:
@@ -766,9 +923,12 @@ def main() -> None:
     if financial_metrics:
         render_performance_metrics(financial_metrics)
 
-    render_transcript_analysis(ticker)
+    st.divider()
+    render_source_research(ticker)
 
+    st.divider()
     st.subheader("Valuation Scenarios")
+    st.caption("Bear/Base/Bull estimates from explicit assumptions. These are scenario outputs, not predictions.")
     st.write(valuation_summary)
     st.dataframe(
         valuation_to_display_frame(valuation_table, current_price=technical_metrics["latest_close"]),
@@ -776,8 +936,31 @@ def main() -> None:
         hide_index=True,
     )
 
+    st.subheader("Market-Implied Expectations")
+    st.caption("Reverse-solves what the current price implies under the configured DCF assumptions.")
+    st.write(market_implied_summary)
+    cols = st.columns(3)
+    cols[0].metric(
+        "Implied FCF Growth",
+        format_value(implied_growth.implied_growth_rate, "implied_growth_rate"),
+        help=term_help("Implied FCF Growth"),
+    )
+    cols[1].metric(
+        "Model Price",
+        format_value(implied_growth.model_price, "target_price"),
+        help="DCF price produced by the reverse-solved implied growth rate.",
+    )
+    cols[2].metric(
+        "Status",
+        implied_growth.status.replace("_", " "),
+        help=market_implied_status_caption(implied_growth.status),
+    )
+    st.dataframe(market_implied_to_display_frame(scenario_deviation), width="stretch", hide_index=True)
+
+    st.divider()
     peers = parse_peer_input(peer_text)
     st.subheader("Peer Comparison")
+    st.caption("Quick comparison against selected tickers using the same public-data pipeline.")
     peer_frame = pd.DataFrame()
     if peers:
         peer_frame = build_peer_table(peers, period, interval)
@@ -786,7 +969,7 @@ def main() -> None:
         st.write("No configured peers.")
 
     st.subheader("Research Report")
-    st.caption("Generate the report when the assumptions and peer list look right.")
+    st.caption("Generate a Markdown preview after reviewing assumptions, peers, and source-backed sections.")
     if st.button("Generate Report Preview", type="primary"):
         with st.spinner("Generating report preview..."):
             report_context = build_report_context(
@@ -797,7 +980,11 @@ def main() -> None:
                 financial_summary=financial_summary,
                 valuation_table=valuation_table,
                 valuation_summary=valuation_summary,
+                market_implied_summary=market_implied_summary,
+                market_implied_table=scenario_deviation,
+                implied_growth=implied_growth.to_dict(),
                 peer_comparison=format_dataframe_markdown(peer_frame) if not peer_frame.empty else None,
+                sec_filing_summary=latest_sec_filing_summary(ticker, PARSED_FILING_DIR),
             )
             st.session_state["markdown_report"] = render_markdown_report(report_context)
             st.session_state["markdown_report_ticker"] = ticker
@@ -818,7 +1005,7 @@ def main() -> None:
             output_path = save_report(markdown_report, ticker, REPORT_DIR)
             st.success(f"Saved to {output_path}")
     elif markdown_report and report_ticker == ticker:
-        st.info("This report preview is from an older format. Generate a fresh preview to see the Executive Summary.")
+        st.info("This report preview is from an older format. Generate a fresh preview to see the latest sections.")
     elif markdown_report:
         st.info("Generate a fresh report preview for the current ticker.")
     else:
