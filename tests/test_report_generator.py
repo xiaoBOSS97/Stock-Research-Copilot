@@ -73,6 +73,7 @@ def test_build_report_context_contains_required_sections() -> None:
         financial_metrics={"revenue_growth_yoy": 0.2, "net_margin": 0.25},
         valuation_table=sample_valuation_table(),
         peer_comparison="| Ticker | Latest Close |\n| --- | --- |\n| MSFT | 100.00 |",
+        external_research_summary="",
         sec_filing_summary="",
         generated_at=datetime(2026, 5, 6, tzinfo=UTC),
     )
@@ -112,6 +113,8 @@ def test_render_markdown_report_includes_sec_summary_when_supplied() -> None:
         company_profile=sample_profile(),
         valuation_table=sample_valuation_table(),
         sec_filing_summary=report_generator.format_sec_filing_summary(sample_filing_sections()),
+        recent_news_summary="",
+        external_research_summary="",
     )
 
     markdown = report_generator.render_markdown_report(context)
@@ -139,13 +142,49 @@ def test_render_markdown_report_includes_market_implied_expectations_when_suppli
             ]
         ),
         sec_filing_summary="",
+        recent_news_summary="",
+        external_research_summary="",
     )
 
     markdown = report_generator.render_markdown_report(context)
 
     assert "## Market-Implied Expectations" in markdown
     assert "Current price implies 5.0% annual FCF growth." in markdown
-    assert "below scenario" in markdown
+    assert "below scenario" not in markdown
+
+
+def test_render_markdown_report_includes_recent_news_when_supplied() -> None:
+    context = report_generator.build_report_context(
+        ticker="AAPL",
+        price_history=sample_price_history(),
+        company_profile=sample_profile(),
+        valuation_table=sample_valuation_table(),
+        recent_news_summary="- 2026-05-07 | Example News | Bullish: Apple launches new device",
+        external_research_summary="",
+        sec_filing_summary="",
+    )
+
+    markdown = report_generator.render_markdown_report(context)
+
+    assert "## Recent News" in markdown
+    assert "Apple launches new device" in markdown
+
+
+def test_render_markdown_report_includes_external_research_when_supplied() -> None:
+    context = report_generator.build_report_context(
+        ticker="AAPL",
+        price_history=sample_price_history(),
+        company_profile=sample_profile(),
+        valuation_table=sample_valuation_table(),
+        external_research_summary="- Rating / Recommendation: Analyst maintains outperform.",
+        recent_news_summary="",
+        sec_filing_summary="",
+    )
+
+    markdown = report_generator.render_markdown_report(context)
+
+    assert "## External Research Notes" in markdown
+    assert "Analyst maintains outperform" in markdown
 
 
 def test_render_markdown_report_includes_template_sections() -> None:
@@ -154,6 +193,8 @@ def test_render_markdown_report_includes_template_sections() -> None:
         price_history=sample_price_history(),
         company_profile=sample_profile(),
         valuation_table=sample_valuation_table(),
+        recent_news_summary="",
+        external_research_summary="",
         sec_filing_summary="",
     )
 
@@ -164,6 +205,8 @@ def test_render_markdown_report_includes_template_sections() -> None:
     assert "### Scenario Details" in markdown
     assert "Scenario valuation range" in markdown
     assert "## Market-Implied Expectations" not in markdown
+    assert "## Recent News" not in markdown
+    assert "## External Research Notes" not in markdown
     assert "## Data Quality Notes" in markdown
     assert "## SEC Filing Summary" not in markdown
     assert "## Terms Used" not in markdown
@@ -179,6 +222,8 @@ def test_render_markdown_report_includes_peer_snapshot_when_supplied() -> None:
         company_profile=sample_profile(),
         valuation_table=sample_valuation_table(),
         peer_comparison="| Ticker | Latest Close |\n| --- | --- |\n| MSFT | 100.00 |",
+        recent_news_summary="",
+        external_research_summary="",
         sec_filing_summary="",
     )
 

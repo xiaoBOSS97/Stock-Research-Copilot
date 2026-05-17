@@ -24,6 +24,18 @@ Generated at: {{ generated_at }}
 {{ sec_filing_summary }}
 {% endif %}
 
+{% if has_recent_news %}
+## Recent News
+
+{{ recent_news_summary }}
+{% endif %}
+
+{% if has_external_research %}
+## External Research Notes
+
+{{ external_research_summary }}
+{% endif %}
+
 ## Valuation Analysis
 
 {{ valuation_analysis }}
@@ -36,8 +48,6 @@ Generated at: {{ generated_at }}
 ## Market-Implied Expectations
 
 {{ market_implied_summary }}
-
-{{ market_implied_table }}
 {% endif %}
 
 {% if has_peer_comparison %}

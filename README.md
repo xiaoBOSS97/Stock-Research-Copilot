@@ -20,6 +20,8 @@ This repository is at a stable MVP stage. The implemented v0.1 foundation includ
 - SEC filing HTML/text parsing into Business, Risk Factors, MD&A, and other source sections
 - local filing RAG-style Q&A with cited source passages and safe refusal when no source is found
 - optional SEC Filing Summary section in generated reports when parsed filings are available
+- recent company news loading from Alpha Vantage News Sentiment with local JSON caching
+- local financial organization report upload, extraction, topic analysis, and search
 - market-implied expectation analysis for reverse-solved DCF growth and scenario deviation
 - unit tests for loaders, analysis modules, valuation, reports, formatting, and dashboard helpers
 
@@ -134,6 +136,8 @@ The Streamlit dashboard lives in `src/app/streamlit_app.py` and includes:
 - Bear/Base/Bull valuation table with P/E, P/S, DCF, or blended methods
 - peer comparison table with technical metrics, market cap, revenue growth, and net margin where available
 - earnings call transcript analysis for uploaded `.txt` or `.md` transcripts
+- recent news headlines, summaries, source links, and sentiment labels when `ALPHA_VANTAGE_API_KEY` is set
+- financial organization report upload and local search for reports you have permission to use
 - Markdown report preview, download, and save action
 
 Run it with:
@@ -162,6 +166,38 @@ ALPHA_VANTAGE_API_KEY=your_key_here
 The automatic downloader uses Alpha Vantage's `EARNINGS_CALL_TRANSCRIPT` endpoint with quarters like `2024Q1`. Manual upload remains available when no API key is configured.
 
 This is a local, lightweight RAG-style foundation. It does not require an LLM or embedding database yet.
+
+## Recent News
+
+The recent news loader lives in `src/data_loader/news_loader.py` and currently supports:
+
+- `fetch_alpha_vantage_news(ticker)` using Alpha Vantage's `NEWS_SENTIMENT` endpoint
+- normalized article rows with published date, title, source, summary, URL, and sentiment fields
+- optional JSON caching under `data/news/{TICKER}_latest_news.json`
+- dashboard display in the `Source Research > News` tab
+- optional `Recent News` section in generated reports when cached articles are available
+
+To enable live news downloads, add an API key to `.env`:
+
+```bash
+ALPHA_VANTAGE_API_KEY=your_key_here
+```
+
+If the live request fails, the dashboard falls back to cached news for the ticker when available.
+
+## Financial Organization Reports
+
+The research report loader lives in `src/data_loader/research_report_loader.py`, and the local report analysis helpers live in `src/rag/research_report_qa.py`.
+
+This feature supports:
+
+- uploading `.pdf`, `.txt`, or `.md` reports you have permission to use
+- extracting report text locally and saving it under `data/research_reports/{TICKER}/`
+- topic signals for rating/recommendation, price target/valuation, growth drivers, margins, and risks
+- keyword search over uploaded report passages
+- optional `External Research Notes` in generated reports when a local report is available
+
+PDF extraction uses `pypdf`; run `uv sync` after pulling this feature so the dependency is installed.
 
 ## SEC Filing Loader
 

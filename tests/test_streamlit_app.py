@@ -12,6 +12,7 @@ from src.app.streamlit_app import (
     metrics_to_display_frame,
     market_implied_to_display_frame,
     market_implied_status_caption,
+    news_to_display_frame,
     performance_metric_specs,
     parse_peer_input,
     statement_row,
@@ -174,6 +175,7 @@ def test_valuation_to_display_frame_hides_raw_assumptions() -> None:
     display = valuation_to_display_frame(table, current_price=100.0)
 
     assert "Assumed Inputs" not in display.columns
+    assert "Status" not in display.columns
     assert "Target Price" in display.columns
     assert "Upside/Downside" in display.columns
     assert display.loc[1, "Target Price"] == "100.00"
@@ -201,9 +203,31 @@ def test_market_implied_to_display_frame_formats_values() -> None:
 
 
 def test_market_implied_status_caption_explains_status() -> None:
-    assert "Solved" in market_implied_status_caption("ok")
+    assert market_implied_status_caption("ok") == ""
     assert "outside" in market_implied_status_caption("out_of_bounds")
     assert "Solver needs" in market_implied_status_caption("insufficient_data")
+
+
+def test_news_to_display_frame_formats_dashboard_columns() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "published_at": pd.Timestamp("2026-05-07T14:30:00Z"),
+                "title": "Apple launches new device",
+                "source": "Example News",
+                "summary": "Apple announced a new product.",
+                "url": "https://example.com/aapl",
+                "overall_sentiment_label": "Bullish",
+                "overall_sentiment_score": 0.35,
+            }
+        ]
+    )
+
+    display = news_to_display_frame(frame)
+
+    assert display.columns.tolist() == ["Published", "Source", "Sentiment", "Title", "Summary", "URL"]
+    assert display.loc[0, "Published"] == "2026-05-07"
+    assert display.loc[0, "Sentiment"] == "Bullish"
 
 
 def test_valuation_input_defaults_use_live_profile_fields() -> None:

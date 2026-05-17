@@ -12,10 +12,14 @@ data/processed/filings/*
 data/reports/*
 data/transcripts/*
 data/filings/*
+data/news/*
+data/research_reports/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/processed/filings/.gitkeep
 !data/reports/.gitkeep
 !data/transcripts/.gitkeep
 !data/filings/.gitkeep
+!data/news/.gitkeep
+!data/research_reports/.gitkeep
 .ipynb_checkpoints/

@@ -24,9 +24,16 @@ from src.analysis.valuation import (
     summarize_valuation,
 )
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements, get_ttm_metrics
+from src.data_loader.news_loader import DEFAULT_NEWS_DIR, load_news_cache, summarize_news
 from src.data_loader.price_loader import get_company_profile, get_price_history
+from src.data_loader.research_report_loader import (
+    DEFAULT_RESEARCH_REPORT_DIR,
+    list_research_report_files,
+    load_research_report_text,
+)
 from src.preprocessing.filing_parser import DEFAULT_PARSED_FILING_DIR, FilingSection
 from src.rag.filing_qa import list_parsed_filing_files, load_parsed_filing_sections
+from src.rag.research_report_qa import summarize_research_report
 from src.utils.formatting import calculate_upside_downside, format_value, humanize_label
 
 
@@ -52,6 +59,8 @@ def build_report_context(
     implied_growth: dict[str, Any] | None = None,
     peer_comparison: str | None = None,
     sec_filing_summary: str | None = None,
+    recent_news_summary: str | None = None,
+    external_research_summary: str | None = None,
     generated_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the Jinja context for a Markdown equity report."""
@@ -73,6 +82,12 @@ def build_report_context(
     filing_summary = sec_filing_summary
     if filing_summary is None:
         filing_summary = latest_sec_filing_summary(symbol)
+    news_summary = recent_news_summary
+    if news_summary is None:
+        news_summary = latest_news_summary(symbol)
+    research_summary = external_research_summary
+    if research_summary is None:
+        research_summary = latest_external_research_summary(symbol)
     market_text, market_table = _market_implied_report_inputs(
         valuation,
         technical_metrics["latest_close"],
@@ -102,6 +117,10 @@ def build_report_context(
         "peer_comparison": peer_text,
         "has_sec_filing_summary": bool(filing_summary.strip()),
         "sec_filing_summary": filing_summary,
+        "has_recent_news": bool(news_summary.strip()),
+        "recent_news_summary": news_summary,
+        "has_external_research": bool(research_summary.strip()),
+        "external_research_summary": research_summary,
         "scenario_table": _format_markdown_table(valuation),
         "data_quality_notes": _data_quality_notes(price_history, metrics, valuation),
         "risk_factors": _default_risk_factors(),
@@ -390,7 +409,8 @@ def _format_valuation_assumptions(frame: pd.DataFrame, current_price: float | No
             "Key Assumptions": _compact_assumptions(row.get("assumed_inputs")),
         }
         if show_status:
-            display_row["Status"] = row.get("status", "N/A")
+            status = row.get("status", "N/A")
+            display_row["Status"] = "" if status == "ok" else status
         rows.append(display_row)
     return _rows_to_markdown(rows)
 
@@ -459,6 +479,40 @@ def latest_sec_filing_summary(
         return ""
     sections = load_parsed_filing_sections(files[0])
     return format_sec_filing_summary(sections, filing_label=files[0].stem)
+
+
+def latest_news_summary(
+    ticker: str,
+    news_dir: str | Path = DEFAULT_NEWS_DIR,
+    *,
+    max_items: int = 5,
+) -> str:
+    """Return a report-ready summary of latest locally cached company news."""
+
+    news = load_news_cache(ticker, news_dir)
+    return summarize_news(news, max_items=max_items)
+
+
+def latest_external_research_summary(
+    ticker: str,
+    report_dir: str | Path = DEFAULT_RESEARCH_REPORT_DIR,
+) -> str:
+    """Return a report-ready summary of the latest locally uploaded research report."""
+
+    files = list_research_report_files(ticker, report_dir)
+    if not files:
+        return ""
+    text = load_research_report_text(files[0])
+    summary = summarize_research_report(text)
+    if not summary:
+        return ""
+    return "\n".join(
+        [
+            f"Latest uploaded report: {files[0].name}",
+            "",
+            summary,
+        ]
+    )
 
 
 def format_sec_filing_summary(
@@ -617,6 +671,8 @@ def _sources_and_disclaimer() -> str:
         [
             "- Price data: Yahoo Finance via yfinance.",
             "- Financial data: Yahoo Finance via yfinance when available.",
+            "- Recent news: Alpha Vantage News Sentiment when cached locally.",
+            "- External research notes: user-uploaded reports stored locally when available.",
             "- SEC filing excerpts: locally downloaded and parsed public EDGAR filings when available.",
             "- Model outputs: scenario and DCF calculations from user-visible assumptions.",
             f"- Disclaimer: {DISCLAIMER}",

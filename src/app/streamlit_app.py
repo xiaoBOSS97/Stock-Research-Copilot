@@ -33,7 +33,15 @@ from src.analysis.valuation import (
     summarize_valuation,
 )
 from src.data_loader.financial_loader import FinancialDataError, get_financial_statements
+from src.data_loader.news_loader import NewsDataError, get_recent_news, load_news_cache, summarize_news
 from src.data_loader.price_loader import PriceDataError, get_company_profile, get_price_history
+from src.data_loader.research_report_loader import (
+    DEFAULT_RESEARCH_REPORT_DIR,
+    ResearchReportError,
+    list_research_report_files,
+    load_research_report_text,
+    save_uploaded_research_report,
+)
 from src.data_loader.sec_loader import SecFilingError, download_filing, get_latest_filing
 from src.data_loader.transcript_loader import (
     TranscriptDownloadError,
@@ -50,6 +58,7 @@ from src.report.report_generator import (
     save_report,
 )
 from src.rag.filing_qa import answer_filing_question, list_parsed_filing_files, load_parsed_filing_sections
+from src.rag.research_report_qa import analyze_research_report, search_research_report
 from src.rag.transcript_analysis import (
     analyze_transcript,
     list_transcript_files,
@@ -67,9 +76,12 @@ REPORT_DIR = PROJECT_ROOT / "data" / "reports"
 TRANSCRIPT_DIR = PROJECT_ROOT / "data" / "transcripts"
 FILING_DIR = PROJECT_ROOT / "data" / "filings"
 PARSED_FILING_DIR = PROJECT_ROOT / "data" / "processed" / "filings"
+NEWS_DIR = PROJECT_ROOT / "data" / "news"
+RESEARCH_REPORT_DIR = PROJECT_ROOT / DEFAULT_RESEARCH_REPORT_DIR
 PERIOD_OPTIONS = {"1Y": "1y", "3Y": "3y", "5Y": "5y", "Max": "max"}
 EXAMPLE_TICKERS = ("AAPL", "NVDA", "MSFT", "TSLA")
 REPORT_SCHEMA_VERSION = "market-implied-v1"
+SOURCE_RESEARCH_ENABLED = False
 FALLBACK_VALUATION_DEFAULTS = {
     "base_eps": 10.0,
     "base_pe": 22.0,
@@ -167,6 +179,35 @@ def load_saved_filing_sections(path_text: str):
     """Load parsed filing sections by path for Streamlit caching."""
 
     return load_parsed_filing_sections(path_text)
+
+
+@st.cache_data(show_spinner=False)
+def load_saved_research_report(path_text: str) -> str:
+    """Load an extracted research report by path for Streamlit caching."""
+
+    return load_research_report_text(path_text)
+
+
+@st.cache_data(show_spinner=False)
+def load_recent_news(ticker: str, limit: int, days_back: int) -> tuple[pd.DataFrame, str | None]:
+    """Load recent company news, falling back to local cache when live download fails."""
+
+    try:
+        return (
+            get_recent_news(
+                ticker,
+                limit=limit,
+                days_back=days_back,
+                cache=True,
+                cache_dir=NEWS_DIR,
+            ),
+            None,
+        )
+    except (NewsDataError, ValueError) as exc:
+        cached = load_news_cache(ticker, NEWS_DIR)
+        if not cached.empty:
+            return cached.head(limit), f"Using cached news because live download failed: {exc}"
+        return cached, str(exc)
 
 
 def parse_peer_input(raw_text: str) -> list[str]:
@@ -647,6 +688,140 @@ def render_filing_qa(ticker: str) -> None:
     st.dataframe(result.sources_frame(), width="stretch", hide_index=True)
 
 
+def news_to_display_frame(news: pd.DataFrame) -> pd.DataFrame:
+    """Format normalized news rows for the dashboard."""
+
+    if news.empty:
+        return news
+    display = news.copy()
+    if "published_at" in display.columns:
+        display["published_at"] = pd.to_datetime(display["published_at"], errors="coerce").dt.strftime(
+            "%Y-%m-%d"
+        )
+    display = display.rename(
+        columns={
+            "published_at": "Published",
+            "title": "Title",
+            "source": "Source",
+            "summary": "Summary",
+            "url": "URL",
+            "overall_sentiment_label": "Sentiment",
+            "overall_sentiment_score": "Sentiment Score",
+        }
+    )
+    columns = [
+        column
+        for column in ["Published", "Source", "Sentiment", "Title", "Summary", "URL"]
+        if column in display.columns
+    ]
+    return display[columns]
+
+
+def render_recent_news(ticker: str) -> pd.DataFrame:
+    """Render recent company news and return the loaded frame."""
+
+    st.markdown("#### Recent News")
+    st.caption("Recent public news headlines from Alpha Vantage News Sentiment when an API key is configured.")
+    col1, col2 = st.columns(2)
+    limit = col1.number_input(
+        "Max articles",
+        min_value=1,
+        max_value=50,
+        value=10,
+        step=1,
+        help="Maximum number of recent articles to display.",
+    )
+    days_back = col2.number_input(
+        "Lookback days",
+        min_value=1,
+        max_value=365,
+        value=30,
+        step=1,
+        help="How far back to search for news.",
+    )
+
+    if st.button("Refresh News"):
+        load_recent_news.clear()
+
+    news, warning = load_recent_news(ticker, int(limit), int(days_back))
+    if warning:
+        st.warning(warning)
+    if news.empty:
+        st.info("No recent news available yet. Add ALPHA_VANTAGE_API_KEY to .env or refresh later.")
+        return news
+
+    st.dataframe(news_to_display_frame(news), width="stretch", hide_index=True)
+    summary = summarize_news(news, max_items=5)
+    if summary:
+        st.markdown("##### News Snapshot")
+        st.markdown(summary)
+    return news
+
+
+def render_research_reports(ticker: str) -> None:
+    """Render local financial organization report upload, analysis, and search."""
+
+    st.markdown("#### Financial Organization Reports")
+    st.caption(
+        "Upload reports you have permission to use. The app stores extracted text locally for analysis and search."
+    )
+    uploaded_file = st.file_uploader(
+        "Upload research report",
+        type=["pdf", "txt", "md"],
+        help="Upload a PDF, text, or Markdown research report from a financial organization.",
+    )
+    if uploaded_file is not None:
+        try:
+            saved_path = save_uploaded_research_report(
+                ticker,
+                uploaded_file.name,
+                uploaded_file.getvalue(),
+                output_dir=RESEARCH_REPORT_DIR,
+            )
+            load_saved_research_report.clear()
+            st.success(f"Saved extracted report text to {saved_path}")
+        except (ResearchReportError, ValueError) as exc:
+            st.warning(f"Could not save research report: {exc}")
+
+    report_files = list_research_report_files(ticker, RESEARCH_REPORT_DIR)
+    if not report_files:
+        st.info("No research reports uploaded yet. Upload a PDF, .txt, or .md report to analyze it locally.")
+        return
+
+    selected_path = st.selectbox(
+        "Research report",
+        report_files,
+        format_func=lambda path: path.name,
+        help="Extracted local research reports for the current ticker.",
+    )
+    report_text = load_saved_research_report(str(selected_path))
+    analysis = analyze_research_report(report_text)
+
+    col1, col2 = st.columns(2)
+    col1.metric("Words", f"{analysis['word_count']:,}")
+    col2.metric("Chunks", str(analysis["chunk_count"]))
+
+    st.markdown("##### Report Signals")
+    st.dataframe(analysis["topic_table"], width="stretch", hide_index=True)
+    if analysis["summary"]:
+        st.markdown("##### Extracted Notes")
+        st.markdown(analysis["summary"])
+
+    suggested = analysis["suggested_questions"]
+    default_question = suggested[0] if suggested else "What is the valuation argument?"
+    question = st.text_input(
+        "Ask the research report",
+        value=default_question,
+        help="Keyword retrieval over the uploaded report. Results are source passages, not investment advice.",
+    )
+    if question:
+        results = search_research_report(report_text, question)
+        if results.empty:
+            st.info("No matching report passages found.")
+        else:
+            st.dataframe(results, width="stretch", hide_index=True)
+
+
 def render_source_research(ticker: str) -> None:
     """Group source-backed qualitative research tools."""
 
@@ -656,11 +831,17 @@ def render_source_research(ticker: str) -> None:
         "These sections are retrieval aids, not standalone conclusions.</div>",
         unsafe_allow_html=True,
     )
-    transcript_tab, filing_tab = st.tabs(["Earnings Call", "SEC Filing"])
+    transcript_tab, filing_tab, news_tab, report_tab = st.tabs(
+        ["Earnings Call", "SEC Filing", "News", "Research Reports"]
+    )
     with transcript_tab:
         render_transcript_analysis(ticker)
     with filing_tab:
         render_filing_qa(ticker)
+    with news_tab:
+        render_recent_news(ticker)
+    with report_tab:
+        render_research_reports(ticker)
 
 
 def is_current_report_preview(markdown_report: str | None, ticker: str, report_ticker: str | None, schema_version: str | None) -> bool:
@@ -678,6 +859,11 @@ def valuation_to_display_frame(valuation_table: pd.DataFrame, current_price: flo
     """Convert valuation output into a compact dashboard table."""
 
     display = valuation_table.copy()
+    if "status" in display.columns:
+        if (display["status"] == "ok").all():
+            display = display.drop(columns=["status"])
+        else:
+            display["status"] = display["status"].replace({"ok": ""})
     if "target_price" in display.columns:
         display["upside_downside"] = display["target_price"].map(
             lambda target_price: calculate_upside_downside(target_price, current_price)
@@ -713,7 +899,7 @@ def market_implied_status_caption(status: str) -> str:
     """Return short UI copy for the implied growth solver status."""
 
     if status == "ok":
-        return "Solved within the configured DCF growth range."
+        return ""
     if status == "out_of_bounds":
         return "Current price sits outside the configured growth bounds."
     return "Solver needs positive current price, FCF, discount rate, terminal growth, and share count."
@@ -923,8 +1109,9 @@ def main() -> None:
     if financial_metrics:
         render_performance_metrics(financial_metrics)
 
-    st.divider()
-    render_source_research(ticker)
+    if SOURCE_RESEARCH_ENABLED:
+        st.divider()
+        render_source_research(ticker)
 
     st.divider()
     st.subheader("Valuation Scenarios")
@@ -939,7 +1126,7 @@ def main() -> None:
     st.subheader("Market-Implied Expectations")
     st.caption("Reverse-solves what the current price implies under the configured DCF assumptions.")
     st.write(market_implied_summary)
-    cols = st.columns(3)
+    cols = st.columns(2)
     cols[0].metric(
         "Implied FCF Growth",
         format_value(implied_growth.implied_growth_rate, "implied_growth_rate"),
@@ -950,12 +1137,8 @@ def main() -> None:
         format_value(implied_growth.model_price, "target_price"),
         help="DCF price produced by the reverse-solved implied growth rate.",
     )
-    cols[2].metric(
-        "Status",
-        implied_growth.status.replace("_", " "),
-        help=market_implied_status_caption(implied_growth.status),
-    )
-    st.dataframe(market_implied_to_display_frame(scenario_deviation), width="stretch", hide_index=True)
+    if implied_growth.status != "ok":
+        st.warning(market_implied_status_caption(implied_growth.status))
 
     st.divider()
     peers = parse_peer_input(peer_text)
