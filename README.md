@@ -23,6 +23,7 @@ This repository is at a stable MVP stage. The implemented v0.1 foundation includ
 - recent company news loading from Alpha Vantage News Sentiment with local JSON caching
 - local financial organization report upload, extraction, topic analysis, and search
 - market-implied expectation analysis for reverse-solved DCF growth and scenario deviation
+- buy-and-hold portfolio backtesting for ETFs, stocks, and commodity proxies such as GLD
 - unit tests for loaders, analysis modules, valuation, reports, formatting, and dashboard helpers
 
 ## Price Loader
@@ -129,6 +130,7 @@ streamlit run src/app/streamlit_app.py
 
 The Streamlit dashboard lives in `src/app/streamlit_app.py` and includes:
 
+- a top-level sidebar tool selector for `Stock Research` and `Portfolio Backtest`
 - ticker, period, peer, valuation method, and scenario assumption controls
 - close price with MA20, MA50, and MA200
 - technical and financial metric cards
@@ -145,6 +147,38 @@ Run it with:
 ```bash
 uv run streamlit run src/app/streamlit_app.py
 ```
+
+## Portfolio Backtest
+
+The portfolio backtest module lives in `src/analysis/portfolio_backtest.py` and currently supports buy-and-hold historical profit estimation.
+
+Open the dashboard and choose `Portfolio Backtest` from the sidebar `Tool` selector. This page runs independently from the single-stock research dashboard.
+
+Use the asset rows to choose one asset and one percent per line, then click `Calculate Portfolio`.
+The asset dropdown supports searching common ETF, stock, bond, and commodity-proxy names. Choose `Other ticker...` for anything not listed. You can add up to 10 assets. A typical starting mix is:
+
+| Ticker | Percent |
+| --- | --- |
+| SPY | 50 |
+| AAPL | 30 |
+| GLD | 20 |
+
+The app normalizes weights automatically, downloads/caches historical prices through the existing price loader, and calculates:
+
+- total contributed capital
+- final portfolio value
+- profit/loss
+- total return
+- annualized return
+- annualized volatility
+- max drawdown
+- per-asset initial value, final value, profit/loss, total return, and ending weight
+
+You can also add periodic investments by setting `Recurring Investment` and choosing `Daily`, `Monthly`, or `Yearly`. Profit/loss and total return are calculated against total contributed capital, not just the starting investment.
+
+For non-market investments such as a savings product or fixed-rate custom investment, choose `CUSTOM_INTEREST - Custom Fixed Interest Investment` and enter the annual interest rate. The app generates a synthetic fixed-return path for that row and mixes it with the rest of the portfolio by allocation percent.
+
+Gold is represented through liquid public market proxies such as `GLD` or `IAU`. ETFs such as `SPY`, `QQQ`, `VTI`, and stocks such as `AAPL`, `NVDA`, or `MSFT` can be mixed in the same portfolio.
 
 ## Earnings Call Transcript Analysis
 

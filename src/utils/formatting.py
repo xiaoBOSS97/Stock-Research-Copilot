@@ -25,6 +25,10 @@ PERCENT_METRICS = {
     "discount_rate",
     "terminal_growth_rate",
     "implied_growth_rate",
+    "annualized_return",
+    "total_return",
+    "weight",
+    "ending_weight",
 }
 LARGE_CURRENCY_METRICS = {
     "marketCap",
@@ -41,6 +45,12 @@ LARGE_CURRENCY_METRICS = {
     "pe_target_price",
     "ps_target_price",
     "dcf_target_price",
+    "portfolio_value",
+    "initial_investment",
+    "total_contributed",
+    "final_value",
+    "profit_loss",
+    "initial_value",
 }
 PRICE_METRICS = {
     "latest_close",
@@ -92,6 +102,16 @@ LABEL_OVERRIDES = {
     "implied_growth_rate": "Implied FCF Growth",
     "price_gap": "Price Gap",
     "position": "Position",
+    "ticker": "Ticker",
+    "portfolio_value": "Portfolio Value",
+    "initial_investment": "Initial Investment",
+    "total_contributed": "Total Contributed",
+    "final_value": "Final Value",
+    "profit_loss": "Profit/Loss",
+    "total_return": "Total Return",
+    "annualized_return": "Annualized Return",
+    "weight": "Weight",
+    "ending_weight": "Ending Weight",
 }
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 import sys
 from typing import Any
@@ -21,6 +22,11 @@ from src.analysis.market_implied_expectations import (
     solve_implied_fcf_growth,
     summarize_market_implied_expectations,
 )
+from src.analysis.portfolio_backtest import (
+    PortfolioBacktestResult,
+    normalize_weights,
+)
+from src.analysis import portfolio_backtest as portfolio_backtest_module
 from src.analysis.technical_analysis import add_technical_indicators, calculate_technical_metrics
 from src.analysis.valuation import (
     blended_valuation,
@@ -78,10 +84,53 @@ FILING_DIR = PROJECT_ROOT / "data" / "filings"
 PARSED_FILING_DIR = PROJECT_ROOT / "data" / "processed" / "filings"
 NEWS_DIR = PROJECT_ROOT / "data" / "news"
 RESEARCH_REPORT_DIR = PROJECT_ROOT / DEFAULT_RESEARCH_REPORT_DIR
-PERIOD_OPTIONS = {"1Y": "1y", "3Y": "3y", "5Y": "5y", "Max": "max"}
+PERIOD_OPTIONS = {"1Y": "1y", "3Y": "3y", "5Y": "5y", "10Y": "10y", "Max": "max"}
 EXAMPLE_TICKERS = ("AAPL", "NVDA", "MSFT", "TSLA")
 REPORT_SCHEMA_VERSION = "market-implied-v1"
 SOURCE_RESEARCH_ENABLED = False
+MAX_PORTFOLIO_ASSETS = 10
+PORTFOLIO_PERCENT_TOLERANCE = 0.01
+CUSTOM_INTEREST_TICKER = "CUSTOM_INTEREST"
+DEFAULT_PORTFOLIO_ROWS = [
+    {"ticker": "SPY", "weight": 50.0},
+    {"ticker": "AAPL", "weight": 30.0},
+    {"ticker": "GLD", "weight": 20.0},
+]
+PORTFOLIO_CUSTOM_ASSET_LABEL = "Other ticker..."
+PORTFOLIO_CUSTOM_INTEREST_LABEL = "Custom fixed interest investment"
+PORTFOLIO_ASSET_CATALOG: tuple[tuple[str, str], ...] = (
+    (CUSTOM_INTEREST_TICKER, "Custom Fixed Interest Investment"),
+    ("SPY", "SPDR S&P 500 ETF Trust"),
+    ("VOO", "Vanguard S&P 500 ETF"),
+    ("IVV", "iShares Core S&P 500 ETF"),
+    ("QQQ", "Invesco QQQ Trust"),
+    ("VTI", "Vanguard Total Stock Market ETF"),
+    ("VT", "Vanguard Total World Stock ETF"),
+    ("VEA", "Vanguard FTSE Developed Markets ETF"),
+    ("VWO", "Vanguard FTSE Emerging Markets ETF"),
+    ("IWM", "iShares Russell 2000 ETF"),
+    ("DIA", "SPDR Dow Jones Industrial Average ETF"),
+    ("BND", "Vanguard Total Bond Market ETF"),
+    ("AGG", "iShares Core U.S. Aggregate Bond ETF"),
+    ("TLT", "iShares 20+ Year Treasury Bond ETF"),
+    ("IEF", "iShares 7-10 Year Treasury Bond ETF"),
+    ("SHY", "iShares 1-3 Year Treasury Bond ETF"),
+    ("GLD", "SPDR Gold Shares"),
+    ("IAU", "iShares Gold Trust"),
+    ("SLV", "iShares Silver Trust"),
+    ("AAPL", "Apple Inc."),
+    ("MSFT", "Microsoft Corporation"),
+    ("NVDA", "NVIDIA Corporation"),
+    ("AMZN", "Amazon.com Inc."),
+    ("GOOGL", "Alphabet Inc. Class A"),
+    ("META", "Meta Platforms Inc."),
+    ("TSLA", "Tesla Inc."),
+    ("BRK-B", "Berkshire Hathaway Inc. Class B"),
+    ("JPM", "JPMorgan Chase & Co."),
+    ("UNH", "UnitedHealth Group Incorporated"),
+    ("XOM", "Exxon Mobil Corporation"),
+    ("JNJ", "Johnson & Johnson"),
+)
 FALLBACK_VALUATION_DEFAULTS = {
     "base_eps": 10.0,
     "base_pe": 22.0,
@@ -214,6 +263,165 @@ def parse_peer_input(raw_text: str) -> list[str]:
     """Parse comma-separated peer ticker input."""
 
     return [item.strip().upper() for item in raw_text.split(",") if item.strip()]
+
+
+def parse_portfolio_weights(raw_text: str) -> dict[str, float]:
+    """Parse portfolio input such as ``SPY:50, AAPL:30, GLD:20``."""
+
+    weights: dict[str, float] = {}
+    for item in raw_text.split(","):
+        cleaned = item.strip()
+        if not cleaned:
+            continue
+        if ":" not in cleaned:
+            raise ValueError("Use TICKER:WEIGHT format, for example SPY:50, AAPL:30, GLD:20.")
+        ticker, raw_weight = cleaned.split(":", 1)
+        symbol = ticker.strip().upper()
+        if not symbol:
+            raise ValueError("Portfolio tickers must not be empty.")
+        weight = pd.to_numeric(raw_weight.strip().replace("%", ""), errors="coerce")
+        if pd.isna(weight):
+            raise ValueError(f"Weight for {symbol} must be numeric.")
+        weights[symbol] = weights.get(symbol, 0.0) + float(weight)
+    return normalize_weights(weights)
+
+
+def portfolio_asset_label(ticker: str, name: str) -> str:
+    """Return a searchable display label for a portfolio asset."""
+
+    return f"{ticker} - {name}"
+
+
+def portfolio_asset_options() -> list[str]:
+    """Return built-in portfolio asset autocomplete labels."""
+
+    return [
+        "",
+        *[portfolio_asset_label(ticker, name) for ticker, name in PORTFOLIO_ASSET_CATALOG],
+        PORTFOLIO_CUSTOM_ASSET_LABEL,
+    ]
+
+
+def ticker_from_portfolio_asset_choice(choice: str) -> str:
+    """Extract a ticker from an autocomplete choice label."""
+
+    cleaned = choice.strip()
+    if not cleaned or cleaned == PORTFOLIO_CUSTOM_ASSET_LABEL:
+        return ""
+    return cleaned.split(" - ", 1)[0].strip().upper()
+
+
+def portfolio_choice_for_ticker(ticker: str) -> str:
+    """Return the autocomplete choice for a ticker, or custom when not in catalog."""
+
+    symbol = ticker.strip().upper()
+    if not symbol:
+        return ""
+    for catalog_ticker, name in PORTFOLIO_ASSET_CATALOG:
+        if catalog_ticker == symbol:
+            return portfolio_asset_label(catalog_ticker, name)
+    return PORTFOLIO_CUSTOM_ASSET_LABEL
+
+
+def portfolio_rows_to_weights(rows: list[dict[str, Any]]) -> dict[str, float]:
+    """Convert editable portfolio rows into weights, requiring 100% total."""
+
+    weights: dict[str, float] = {}
+    for row in rows:
+        symbol = str(row.get("ticker") or "").strip().upper()
+        raw_weight = row.get("weight")
+        numeric = pd.to_numeric(raw_weight, errors="coerce")
+        if not symbol and (raw_weight is None or pd.isna(numeric) or float(numeric) == 0):
+            continue
+        if not symbol:
+            raise ValueError("Every portfolio row with a percent needs a ticker.")
+        if pd.isna(numeric):
+            raise ValueError(f"Percent for {symbol} must be numeric.")
+        weight = float(numeric)
+        if weight <= 0:
+            raise ValueError(f"Percent for {symbol} must be greater than zero.")
+        weights[symbol] = weights.get(symbol, 0.0) + weight
+    validate_portfolio_percent_total(weights)
+    return {ticker: weight / 100.0 for ticker, weight in weights.items()}
+
+
+def portfolio_percent_total(rows: list[dict[str, Any]]) -> float:
+    """Return the total entered percent for non-empty portfolio rows."""
+
+    total = 0.0
+    for row in rows:
+        symbol = str(row.get("ticker") or "").strip()
+        raw_weight = row.get("weight")
+        numeric = pd.to_numeric(raw_weight, errors="coerce")
+        if not symbol or pd.isna(numeric):
+            continue
+        total += float(numeric)
+    return total
+
+
+def validate_portfolio_percent_total(weights: dict[str, float]) -> None:
+    """Require editable portfolio percentages to add up to 100."""
+
+    total = sum(weights.values())
+    if abs(total - 100.0) > PORTFOLIO_PERCENT_TOLERANCE:
+        raise ValueError(f"Portfolio percentages must add up to 100%. Current total is {total:.1f}%.")
+
+
+def portfolio_rows_to_interest_rates(rows: list[dict[str, Any]]) -> dict[str, float]:
+    """Return annual fixed interest rates for custom interest portfolio rows."""
+
+    rates = {}
+    for row in rows:
+        symbol = str(row.get("ticker") or "").strip().upper()
+        if symbol != CUSTOM_INTEREST_TICKER:
+            continue
+        rate = pd.to_numeric(row.get("interest_rate"), errors="coerce")
+        if pd.isna(rate):
+            raise ValueError("Custom fixed interest rate must be numeric.")
+        rates[CUSTOM_INTEREST_TICKER] = float(rate)
+    return rates
+
+
+def synthetic_index_for_period(period: str, end_date: pd.Timestamp | None = None) -> pd.DatetimeIndex:
+    """Build a business-day index for synthetic portfolio assets."""
+
+    normalized = str(period).lower()
+    days_by_period = {
+        "1y": 365,
+        "3y": 365 * 3,
+        "5y": 365 * 5,
+        "10y": 365 * 10,
+        "max": 365 * 10,
+    }
+    days = days_by_period.get(normalized, 365 * 5)
+    end = (end_date or pd.Timestamp.today()).normalize()
+    start = end - pd.Timedelta(days=days)
+    index = pd.bdate_range(start=start, end=end)
+    if len(index) < 2:
+        index = pd.date_range(start=start, end=end, periods=2)
+    return index
+
+
+def build_fixed_interest_price_history(
+    annual_rate: float,
+    index: pd.DatetimeIndex,
+    ticker: str = CUSTOM_INTEREST_TICKER,
+) -> pd.DataFrame:
+    """Create synthetic close prices for a fixed annual interest investment."""
+
+    dates = pd.DatetimeIndex(index).sort_values()
+    if len(dates) < 2:
+        raise ValueError("Synthetic fixed interest history needs at least two dates.")
+    elapsed_days = (dates - dates[0]).days
+    close = 100.0 * (1.0 + annual_rate) ** (elapsed_days / 365.25)
+    return pd.DataFrame({"Close": close}, index=dates).rename_axis("Date")
+
+
+def ensure_portfolio_rows_state() -> None:
+    """Initialize editable portfolio rows in Streamlit session state."""
+
+    if "portfolio_rows" not in st.session_state:
+        st.session_state["portfolio_rows"] = [row.copy() for row in DEFAULT_PORTFOLIO_ROWS]
 
 
 def default_period_index(settings: dict[str, Any]) -> int:
@@ -461,6 +669,320 @@ def build_peer_table(peers: list[str], period: str, interval: str) -> pd.DataFra
             }
         )
     return pd.DataFrame(rows)
+
+
+def run_portfolio_backtest_from_prices(
+    weights: dict[str, float],
+    initial_investment: float,
+    period: str,
+    interval: str,
+    recurring_contribution: float = 0.0,
+    contribution_frequency: str = "none",
+    custom_interest_rates: dict[str, float] | None = None,
+) -> tuple[PortfolioBacktestResult | None, list[str]]:
+    """Load asset prices and run a buy-and-hold portfolio backtest."""
+
+    price_history: dict[str, pd.DataFrame] = {}
+    warnings = []
+    interest_rates = custom_interest_rates or {}
+    for ticker in weights:
+        if ticker == CUSTOM_INTEREST_TICKER:
+            continue
+        data, error = load_price_data(ticker, period, interval)
+        if data is None:
+            warnings.append(f"{ticker}: {error or 'price data unavailable'}")
+            continue
+        price_history[ticker] = data
+
+    if warnings:
+        return None, warnings
+    if CUSTOM_INTEREST_TICKER in weights:
+        annual_rate = interest_rates.get(CUSTOM_INTEREST_TICKER)
+        if annual_rate is None:
+            return None, ["Custom fixed interest rate is missing."]
+        if price_history:
+            synthetic_index = next(iter(price_history.values())).index
+        else:
+            synthetic_index = synthetic_index_for_period(period)
+        price_history[CUSTOM_INTEREST_TICKER] = build_fixed_interest_price_history(
+            annual_rate,
+            pd.DatetimeIndex(synthetic_index),
+        )
+    try:
+        # Streamlit can keep imported helper modules alive across script reruns.
+        # Reload the local backtest module before calculation so new arguments
+        # added during development are available without a full server restart.
+        backtest_module = importlib.reload(portfolio_backtest_module)
+        return (
+            backtest_module.run_buy_and_hold_backtest(
+                price_history,
+                weights,
+                initial_investment,
+                recurring_contribution=recurring_contribution,
+                contribution_frequency=contribution_frequency,
+            ),
+            [],
+        )
+    except backtest_module.PortfolioBacktestError as exc:
+        return None, [str(exc)]
+
+
+def portfolio_metrics_to_display(result: PortfolioBacktestResult) -> list[tuple[str, str, str]]:
+    """Return dashboard metric labels, values, and help text for a portfolio result."""
+
+    return [
+        (
+            "Total Contributed",
+            format_value(result.total_contributed, "total_contributed"),
+            "Total capital deposited, including the initial investment and recurring contributions.",
+        ),
+        (
+            "Final Value",
+            format_value(result.final_value, "portfolio_value"),
+            "Portfolio value at the end of the selected historical period.",
+        ),
+        (
+            "Profit/Loss",
+            format_value(result.profit_loss, "profit_loss"),
+            "Final value minus the initial investment.",
+        ),
+        (
+            "Total Return",
+            format_value(result.total_return, "total_return"),
+            "Total portfolio gain or loss over the selected historical period.",
+        ),
+        (
+            "Annualized Return",
+            format_value(result.annualized_return, "annualized_return"),
+            "Compound annual growth rate over the selected historical period.",
+        ),
+        (
+            "Volatility",
+            format_value(result.annualized_volatility, "annualized_volatility"),
+            "Annualized volatility based on daily portfolio returns.",
+        ),
+        (
+            "Max Drawdown",
+            format_value(result.max_drawdown, "max_drawdown"),
+            "Largest peak-to-trough portfolio decline during the selected period.",
+        ),
+    ]
+
+
+def portfolio_contributions_to_display(frame: pd.DataFrame) -> pd.DataFrame:
+    """Format per-asset contribution rows for dashboard display."""
+
+    display = frame.copy()
+    for column in ("initial_value", "final_value", "profit_loss"):
+        if column in display.columns:
+            display[column] = display[column].map(lambda value: format_value(value, column))
+    for column in ("weight", "total_return", "ending_weight"):
+        if column in display.columns:
+            display[column] = display[column].map(lambda value: format_value(value, column))
+    return display.rename(columns={column: humanize_label(column) for column in display.columns})
+
+
+def build_portfolio_value_chart(result: PortfolioBacktestResult) -> go.Figure:
+    """Build a portfolio value chart."""
+
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=result.portfolio_value.index,
+            y=result.portfolio_value,
+            name="Portfolio Value",
+            mode="lines",
+        )
+    )
+    figure.update_layout(
+        height=420,
+        margin={"l": 8, "r": 8, "t": 36, "b": 8},
+        xaxis_title="Date",
+        yaxis_title="Value",
+        legend={"orientation": "h"},
+    )
+    return figure
+
+
+def render_portfolio_backtest(default_period: str, interval: str) -> None:
+    """Render a buy-and-hold portfolio profit estimator."""
+
+    ensure_portfolio_rows_state()
+    st.markdown("##### Investment Setup")
+    col1, col2 = st.columns(2)
+    initial_investment = col1.number_input(
+        "Initial Investment",
+        min_value=0.0,
+        value=10_000.0,
+        step=1_000.0,
+        help="Starting portfolio amount for the historical backtest.",
+    )
+    selected_period = col2.selectbox(
+        "Backtest Period",
+        list(PERIOD_OPTIONS),
+        index=list(PERIOD_OPTIONS.values()).index(default_period)
+        if default_period in PERIOD_OPTIONS.values()
+        else 2,
+        help="Historical range used for the portfolio backtest.",
+    )
+    recurring_cols = st.columns(2)
+    recurring_contribution = recurring_cols[0].number_input(
+        "Recurring Investment",
+        min_value=0.0,
+        value=0.0,
+        step=100.0,
+        help="Amount added on the selected recurring schedule. Use 0 for one-time investment only.",
+    )
+    contribution_frequency = recurring_cols[1].selectbox(
+        "Recurring Frequency",
+        ["None", "Daily", "Monthly", "Yearly"],
+        help="How often to add the recurring investment amount.",
+    )
+
+    st.markdown("##### Portfolio Assets")
+    st.caption(
+        "Add up to 10 assets. Type in the Asset dropdown to search common ETF, stock, bond, and gold-proxy names."
+    )
+    edited_rows = []
+    asset_options = portfolio_asset_options()
+    for index, row in enumerate(st.session_state["portfolio_rows"]):
+        row_cols = st.columns([2.2, 1.2, 1, 0.8], vertical_alignment="bottom")
+        current_ticker = str(row.get("ticker") or "").strip().upper()
+        current_choice = portfolio_choice_for_ticker(current_ticker)
+        choice_value = row_cols[0].selectbox(
+            "Asset",
+            asset_options,
+            index=asset_options.index(current_choice) if current_choice in asset_options else 0,
+            key=f"portfolio_asset_{index}",
+            help="Search by ticker or asset name. Choose Other ticker for assets not listed.",
+        )
+        ticker_value = ticker_from_portfolio_asset_choice(choice_value)
+        interest_rate = None
+        if choice_value == PORTFOLIO_CUSTOM_ASSET_LABEL:
+            ticker_value = row_cols[1].text_input(
+                "Other Ticker",
+                value=current_ticker if current_ticker else "",
+                key=f"portfolio_custom_ticker_{index}",
+                help="Enter any ticker supported by Yahoo Finance.",
+            )
+            weight_column = row_cols[2]
+        elif ticker_value == CUSTOM_INTEREST_TICKER:
+            interest_rate = row_cols[1].number_input(
+                "Annual Interest",
+                min_value=-1.0,
+                max_value=1.0,
+                value=float(row.get("interest_rate") or 0.04),
+                step=0.005,
+                format="%.3f",
+                key=f"portfolio_interest_rate_{index}",
+                help="Annual fixed return used to generate a synthetic investment path.",
+            )
+            weight_column = row_cols[2]
+        else:
+            weight_column = row_cols[1]
+        weight_value = weight_column.number_input(
+            "Percent",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(row.get("weight") or 0.0),
+            step=1.0,
+            key=f"portfolio_weight_{index}",
+            help="Target starting allocation percent for this asset.",
+        )
+        if row_cols[3].button(
+            "Remove",
+            key=f"portfolio_remove_{index}",
+            disabled=len(st.session_state["portfolio_rows"]) <= 1,
+            help="Remove this asset row.",
+            use_container_width=True,
+        ):
+            st.session_state["portfolio_rows"].pop(index)
+            for key in (
+                f"portfolio_asset_{index}",
+                f"portfolio_custom_ticker_{index}",
+                f"portfolio_interest_rate_{index}",
+                f"portfolio_weight_{index}",
+            ):
+                st.session_state.pop(key, None)
+            st.rerun()
+        edited_row = {"ticker": ticker_value, "weight": weight_value}
+        if ticker_value == CUSTOM_INTEREST_TICKER:
+            edited_row["interest_rate"] = interest_rate
+        edited_rows.append(edited_row)
+    st.session_state["portfolio_rows"] = edited_rows
+    percent_total = portfolio_percent_total(edited_rows)
+    if abs(percent_total - 100.0) <= PORTFOLIO_PERCENT_TOLERANCE:
+        st.caption(f"Total allocation: {percent_total:.1f}%")
+    else:
+        st.warning(f"Total allocation is {percent_total:.1f}%. It must add up to 100% before calculation.")
+
+    action_cols = st.columns([1, 5])
+    if action_cols[0].button(
+        "Add Asset",
+        disabled=len(st.session_state["portfolio_rows"]) >= MAX_PORTFOLIO_ASSETS,
+        help=f"Add another asset row, up to {MAX_PORTFOLIO_ASSETS}.",
+    ):
+        st.session_state["portfolio_rows"].append({"ticker": "", "weight": 0.0})
+        st.rerun()
+
+    if not st.button("Calculate Portfolio", type="primary"):
+        st.info("Set portfolio assets and click Calculate Portfolio.")
+        return
+
+    try:
+        weights = portfolio_rows_to_weights(edited_rows)
+        custom_interest_rates = portfolio_rows_to_interest_rates(edited_rows)
+    except ValueError as exc:
+        st.warning(str(exc))
+        return
+
+    with st.spinner("Running portfolio backtest..."):
+        result, warnings = run_portfolio_backtest_from_prices(
+            weights,
+            initial_investment=float(initial_investment),
+            period=PERIOD_OPTIONS[selected_period],
+            interval=interval,
+            recurring_contribution=float(recurring_contribution),
+            contribution_frequency=contribution_frequency,
+            custom_interest_rates=custom_interest_rates,
+        )
+    if warnings:
+        st.warning("Could not run portfolio backtest: " + "; ".join(warnings))
+        return
+    if result is None:
+        st.warning("Could not run portfolio backtest.")
+        return
+
+    st.caption(f"Backtest window: {result.start_date} to {result.end_date} ({result.trading_days} trading days).")
+    metrics = portfolio_metrics_to_display(result)
+    metric_columns = st.columns(len(metrics))
+    for column, (label, value, help_text) in zip(
+        metric_columns,
+        metrics,
+        strict=True,
+    ):
+        column.metric(label, value, help=help_text)
+
+    st.plotly_chart(build_portfolio_value_chart(result), width="stretch")
+    st.dataframe(
+        portfolio_contributions_to_display(result.asset_contributions),
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def render_portfolio_backtest_page(settings: dict[str, Any]) -> None:
+    """Render the standalone portfolio backtest tool page."""
+
+    st.title("Portfolio Backtest")
+    st.caption(
+        "A standalone historical profit estimator for ETF, stock, bond, and commodity-proxy portfolios."
+    )
+    default_period = str(settings.get("default_period", "5y"))
+    interval = str(settings.get("default_interval", "1d"))
+    render_portfolio_backtest(default_period, interval)
+    st.caption(DISCLAIMER)
+    st.caption("Data source: Yahoo Finance via yfinance. Backtests are historical and do not predict future returns.")
 
 
 def render_metric_cards(technical_metrics: dict[str, Any], financial_metrics: dict[str, float | None]) -> None:
@@ -916,6 +1438,16 @@ def main() -> None:
     st.session_state.setdefault("markdown_report", None)
     st.session_state.setdefault("markdown_report_ticker", None)
     st.session_state.setdefault("markdown_report_schema_version", None)
+
+    with st.sidebar:
+        app_section = st.radio(
+            "Tool",
+            ["Stock Research", "Portfolio Backtest"],
+            help="Choose the single-stock research dashboard or the standalone portfolio backtest tool.",
+        )
+    if app_section == "Portfolio Backtest":
+        render_portfolio_backtest_page(settings)
+        return
 
     with st.sidebar:
         default_ticker = str(settings.get("default_ticker", "AAPL"))
