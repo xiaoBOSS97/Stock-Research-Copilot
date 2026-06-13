@@ -1,305 +1,247 @@
 # Stock Research Copilot
 
-A Python and Streamlit based equity research dashboard for educational use.
+Stock Research Copilot is a personal finance research dashboard for learning, comparing stocks, and testing simple portfolio ideas.
 
-Stock Research Copilot collects public market and financial data, computes technical indicators and financial ratios, builds scenario-based valuation ranges, and generates structured Markdown equity research reports.
+It helps you:
 
-## Project Status
+- research an individual stock
+- compare valuation scenarios
+- generate a Markdown research report
+- backtest a portfolio of stocks, ETFs, gold proxies, and fixed-interest investments
+- upload or review source material when source research is enabled
 
-This repository is at a stable MVP stage. The implemented v0.1 foundation includes:
+This app is for education and research only. It is not financial advice.
 
-- repository structure from `docs/stock_research_copilot_codex_spec.pdf`
-- `yfinance` price history and company profile loader with ticker validation and optional raw CSV caching
-- moving averages, RSI, annualized volatility, and max drawdown calculations
-- yfinance financial statement loading plus revenue growth, margins, returns, leverage, and free cash flow metrics
-- Bear/Base/Bull valuation scenarios using P/E, P/S, DCF, and blended methods
-- Markdown equity research report generation
-- Streamlit dashboard for price trends, financial metrics, valuation scenarios, peers, and report preview
-- local earnings call transcript upload, theme analysis, and transcript passage search
-- SEC EDGAR ticker-to-CIK lookup, recent filing metadata retrieval, and filing download helpers
-- SEC filing HTML/text parsing into Business, Risk Factors, MD&A, and other source sections
-- local filing RAG-style Q&A with cited source passages and safe refusal when no source is found
-- optional SEC Filing Summary section in generated reports when parsed filings are available
-- recent company news loading from Alpha Vantage News Sentiment with local JSON caching
-- local financial organization report upload, extraction, topic analysis, and search
-- market-implied expectation analysis for reverse-solved DCF growth and scenario deviation
-- buy-and-hold portfolio backtesting for ETFs, stocks, and commodity proxies such as GLD
-- unit tests for loaders, analysis modules, valuation, reports, formatting, and dashboard helpers
+## Start The App
 
-## Price Loader
-
-The price loader lives in `src/data_loader/price_loader.py` and currently supports:
-
-- `get_price_history(ticker, period="5y", interval="1d")`
-- `get_company_profile(ticker)`
-- `validate_ticker(ticker)`
-- optional CSV caching to `data/raw`
-
-## Technical Analysis
-
-The technical analysis module lives in `src/analysis/technical_analysis.py` and currently supports:
-
-- `add_moving_averages(price_data)` for MA20, MA50, and MA200
-- `calculate_rsi(price_data, window=14)`
-- `calculate_volatility(price_data)`
-- `calculate_max_drawdown(price_data)`
-- `add_technical_indicators(price_data)`
-- `calculate_technical_metrics(price_data)` for dashboard/report summaries
-- `generate_technical_summary(price_data)` with disclaimer-safe wording
-
-## Financial Analysis
-
-The financial loader lives in `src/data_loader/financial_loader.py` and currently supports:
-
-- `get_financial_statements(ticker)`
-- `normalize_financials(raw)`
-- `get_ttm_metrics(ticker)`
-
-The financial ratios module lives in `src/analysis/financial_ratios.py` and currently supports:
-
-- `calculate_growth_rates(income_statement)`
-- `calculate_margins(income_statement, cash_flow)`
-- `calculate_free_cash_flow(cash_flow)`
-- `calculate_returns(income_statement, balance_sheet)`
-- `calculate_leverage(income_statement, balance_sheet)`
-- `calculate_financial_metrics(statements)`
-- `generate_financial_summary(metrics)`
-
-## Valuation
-
-The valuation module lives in `src/analysis/valuation.py` and currently supports:
-
-- `ScenarioAssumption`
-- `DcfAssumption`
-- `build_scenarios(...)`
-- `build_dcf_scenarios(...)`
-- `estimate_by_pe(assumptions)`
-- `estimate_by_ps(assumptions)`
-- `estimate_by_dcf(assumptions)`
-- `blended_valuation(assumptions)`
-- `blended_valuation_with_dcf(assumptions, dcf_assumptions)`
-- `summarize_valuation(valuation_table, current_price=None)`
-
-Valuation outputs are scenario ranges based on explicit assumptions. They are for educational and research purposes only and are not investment advice.
-
-## Report Generation
-
-The report generator lives in `src/report/report_generator.py` and currently supports:
-
-- `build_report_context(...)`
-- `render_markdown_report(context)`
-- `save_report(markdown, ticker)`
-- `generate_report_for_ticker(ticker)`
-
-Generate a Markdown report:
+From the project folder, run:
 
 ```bash
-uv run python -m src.report.report_generator --ticker AAPL
+./run_app.sh
 ```
 
-The default output path is `data/reports/AAPL_report.md`.
-
-## Quick Start
+If that does not work, use:
 
 ```bash
-uv sync
-uv run pytest -q
+UV_CACHE_DIR=.uv-cache uv run streamlit run src/app/streamlit_app.py
 ```
 
-Run the dashboard:
+Then open the local URL shown in the terminal, usually:
 
-```bash
-uv run streamlit run src/app/streamlit_app.py
+```text
+http://localhost:8501
 ```
 
-Generate a report:
+## Main Tools
 
-```bash
-uv run python -m src.report.report_generator --ticker AAPL
+Use the sidebar `Tool` selector to choose:
+
+- `Stock Research`
+- `Portfolio Backtest`
+
+## Stock Research
+
+Use this page when you want to research one company.
+
+### Inputs
+
+- `Ticker`: stock symbol such as `AAPL`, `NVDA`, `MSFT`, or `TSLA`
+- `Period`: chart and metric history, such as `1Y`, `3Y`, `5Y`, `10Y`, or `Max`
+- `Peers`: comparable tickers for the peer table
+- `Valuation Method`: choose `blended`, `blended + DCF`, `PE`, `PS`, or `DCF`
+- `Scenario Assumptions`: adjust EPS, P/E, revenue, P/S, free cash flow, DCF growth, discount rate, terminal growth, and net debt
+
+### What You See
+
+- price trend chart with moving averages
+- key metrics such as close price, RSI, volatility, revenue growth, margins, and free cash flow margin
+- financial performance charts and tables when data is available
+- valuation scenarios for Bear/Base/Bull cases
+- market-implied expectations
+- peer comparison
+- research report preview, download, and save options
+
+### Valuation Scenarios
+
+Valuation scenarios answer:
+
+```text
+What could the stock be worth under my Bear/Base/Bull assumptions?
 ```
 
-If you prefer an activated shell, `uv sync` creates `.venv`, so you can still run:
+These are model outputs from your assumptions. They are not predictions.
 
-```bash
-source .venv/bin/activate
-pytest -q
-streamlit run src/app/streamlit_app.py
+### Market-Implied Expectations
+
+Market-implied expectations answer:
+
+```text
+What growth rate does the current stock price seem to imply?
 ```
 
-## Dashboard
+This reverse-solves a simplified DCF model. It is a way to compare today’s market price with your assumptions.
 
-The Streamlit dashboard lives in `src/app/streamlit_app.py` and includes:
+### Research Report
 
-- a top-level sidebar tool selector for `Stock Research` and `Portfolio Backtest`
-- ticker, period, peer, valuation method, and scenario assumption controls
-- close price with MA20, MA50, and MA200
-- technical and financial metric cards
-- revenue, net income, and free cash flow chart when statements are available
-- Bear/Base/Bull valuation table with P/E, P/S, DCF, or blended methods
-- peer comparison table with technical metrics, market cap, revenue growth, and net margin where available
-- earnings call transcript analysis for uploaded `.txt` or `.md` transcripts
-- recent news headlines, summaries, source links, and sentiment labels when `ALPHA_VANTAGE_API_KEY` is set
-- financial organization report upload and local search for reports you have permission to use
-- Markdown report preview, download, and save action
+Click `Generate Report Preview` to create a Markdown report inside the dashboard.
 
-Run it with:
+You can then:
 
-```bash
-uv run streamlit run src/app/streamlit_app.py
-```
+- preview it
+- download it
+- save it under `data/reports/`
 
 ## Portfolio Backtest
 
-The portfolio backtest module lives in `src/analysis/portfolio_backtest.py` and currently supports buy-and-hold historical profit estimation.
+Use this page when you want to estimate how a portfolio would have performed historically.
 
-Open the dashboard and choose `Portfolio Backtest` from the sidebar `Tool` selector. This page runs independently from the single-stock research dashboard.
+It supports:
 
-Use the asset rows to choose one asset and one percent per line, then click `Calculate Portfolio`.
-The asset dropdown supports searching common ETF, stock, bond, and commodity-proxy names. Choose `Other ticker...` for anything not listed. You can add up to 10 assets. A typical starting mix is:
+- stocks
+- ETFs
+- bond ETFs
+- gold/silver ETF proxies
+- custom tickers
+- custom fixed-interest investments
+- one-time investments
+- daily, monthly, or yearly recurring investments
 
-| Ticker | Percent |
-| --- | --- |
+### Basic Use
+
+1. Choose `Portfolio Backtest` in the sidebar.
+2. Set `Initial Investment`.
+3. Choose `Backtest Period`.
+4. Optionally set `Recurring Investment`.
+5. Choose `Recurring Frequency`.
+6. Add asset rows.
+7. Make sure percentages add up to `100%`.
+8. Click `Calculate Portfolio`.
+
+### Asset Rows
+
+Each row has:
+
+- `Asset`
+- optional custom ticker or interest rate field
+- `Percent`
+- `Remove`
+
+Use `Add Asset` to add more rows.
+
+Use `Auto Fill %` to split `100%` evenly across the current rows.
+
+### Example Portfolio
+
+| Asset | Percent |
+| --- | ---: |
 | SPY | 50 |
 | AAPL | 30 |
 | GLD | 20 |
 
-The app normalizes weights automatically, downloads/caches historical prices through the existing price loader, and calculates:
+The total must be exactly `100%` before calculation.
 
-- total contributed capital
-- final portfolio value
+### Other Ticker
+
+Choose `Other ticker...` when the asset is not in the dropdown.
+
+Examples:
+
+- `AMD`
+- `COST`
+- `SCHD`
+- `ARKK`
+- `BTC-USD`
+- `0700.HK`
+- `VOD.L`
+
+The app will try to fetch the ticker with Yahoo Finance data.
+
+### Custom Fixed Interest
+
+Choose:
+
+```text
+CUSTOM_INTEREST - Custom Fixed Interest Investment
+```
+
+Use this for something like a savings product, fixed-rate account, or other custom return assumption.
+
+Enter the annual interest rate as a decimal:
+
+| Annual Interest | Meaning |
+| ---: | --- |
+| `0.04` | 4% per year |
+| `0.025` | 2.5% per year |
+| `0.00` | 0% per year |
+
+The app creates a synthetic fixed-return path and mixes it with the rest of your portfolio.
+
+### Portfolio Results
+
+The backtest shows:
+
+- total contributed
+- final value
 - profit/loss
 - total return
 - annualized return
 - annualized volatility
 - max drawdown
-- per-asset initial value, final value, profit/loss, total return, and ending weight
+- portfolio value chart
+- per-asset contribution table
 
-You can also add periodic investments by setting `Recurring Investment` and choosing `Daily`, `Monthly`, or `Yearly`. Profit/loss and total return are calculated against total contributed capital, not just the starting investment.
+For recurring investments, profit/loss and total return are calculated against total contributed capital.
 
-For non-market investments such as a savings product or fixed-rate custom investment, choose `CUSTOM_INTEREST - Custom Fixed Interest Investment` and enter the annual interest rate. The app generates a synthetic fixed-return path for that row and mixes it with the rest of the portfolio by allocation percent.
+## Optional API Keys
 
-Gold is represented through liquid public market proxies such as `GLD` or `IAU`. ETFs such as `SPY`, `QQQ`, `VTI`, and stocks such as `AAPL`, `NVDA`, or `MSFT` can be mixed in the same portfolio.
+The app works without paid APIs for the main stock and portfolio tools.
 
-## Earnings Call Transcript Analysis
-
-The transcript analysis module lives in `src/rag/transcript_analysis.py` and currently supports:
-
-- uploading or saving plain-text / Markdown earnings call transcripts under `data/transcripts/{TICKER}/`
-- automatic transcript download from Alpha Vantage when `ALPHA_VANTAGE_API_KEY` is set
-- deterministic transcript chunking and keyword retrieval
-- topic signals for revenue/demand, margins/costs, guidance/outlook, risks/headwinds, and cash flow/capital
-- management tone classification
-- transcript question search that returns source passages
-
-To enable automatic downloads, add an API key to `.env`:
+Some optional source-research features use `.env` keys:
 
 ```bash
-ALPHA_VANTAGE_API_KEY=your_key_here
-```
-
-The automatic downloader uses Alpha Vantage's `EARNINGS_CALL_TRANSCRIPT` endpoint with quarters like `2024Q1`. Manual upload remains available when no API key is configured.
-
-This is a local, lightweight RAG-style foundation. It does not require an LLM or embedding database yet.
-
-## Recent News
-
-The recent news loader lives in `src/data_loader/news_loader.py` and currently supports:
-
-- `fetch_alpha_vantage_news(ticker)` using Alpha Vantage's `NEWS_SENTIMENT` endpoint
-- normalized article rows with published date, title, source, summary, URL, and sentiment fields
-- optional JSON caching under `data/news/{TICKER}_latest_news.json`
-- dashboard display in the `Source Research > News` tab
-- optional `Recent News` section in generated reports when cached articles are available
-
-To enable live news downloads, add an API key to `.env`:
-
-```bash
-ALPHA_VANTAGE_API_KEY=your_key_here
-```
-
-If the live request fails, the dashboard falls back to cached news for the ticker when available.
-
-## Financial Organization Reports
-
-The research report loader lives in `src/data_loader/research_report_loader.py`, and the local report analysis helpers live in `src/rag/research_report_qa.py`.
-
-This feature supports:
-
-- uploading `.pdf`, `.txt`, or `.md` reports you have permission to use
-- extracting report text locally and saving it under `data/research_reports/{TICKER}/`
-- topic signals for rating/recommendation, price target/valuation, growth drivers, margins, and risks
-- keyword search over uploaded report passages
-- optional `External Research Notes` in generated reports when a local report is available
-
-PDF extraction uses `pypdf`; run `uv sync` after pulling this feature so the dependency is installed.
-
-## SEC Filing Loader
-
-The SEC filing loader lives in `src/data_loader/sec_loader.py` and currently supports:
-
-- `lookup_cik(ticker)` using the SEC ticker mapping
-- `get_recent_filings(ticker, forms=("10-K", "10-Q", "8-K"), limit=10)`
-- `get_latest_filing(ticker, form="10-K")`
-- `download_filing(filing)` and `download_latest_filing(ticker, form="10-K")`
-
-SEC filings are saved under `data/filings/{TICKER}/` when downloaded. Set a descriptive SEC user agent in `.env`:
-
-```bash
+ALPHA_VANTAGE_API_KEY=
+FMP_API_KEY=
+FINNHUB_API_KEY=
 SEC_USER_AGENT=StockResearchCopilot/0.1 your.email@example.com
 ```
 
-## Filing Parser
-
-The filing parser lives in `src/preprocessing/filing_parser.py` and currently supports:
-
-- `load_filing_text(path)` for saved `.htm`, `.html`, or `.txt` filings
-- `extract_filing_sections(text)` for major SEC items such as Business, Risk Factors, MD&A, and Financial Statements
-- `chunk_filing_sections(sections, ticker=..., filing_type=..., filing_date=...)`
-- `save_parsed_filing(sections, ticker=..., accession_number=...)`
-
-Parsed filing section JSON is saved under `data/processed/filings/{TICKER}/`. This is the foundation for filing-based RAG Q&A and source-backed report sections.
-
-## Filing Q&A
-
-The filing Q&A module lives in `src/rag/filing_qa.py` and currently supports:
-
-- listing and loading parsed filing section JSON files
-- keyword retrieval over parsed filing chunks
-- answers that cite source passages like `[1]`
-- safe refusal when no relevant filing source is found
-
-The Streamlit dashboard includes an SEC Filing Q&A section where you can download and parse the latest 10-K, 10-Q, or 8-K, then ask questions against the parsed filing.
-
-Generated Markdown reports automatically include an **SEC Filing Summary** section when a parsed filing exists for the ticker.
-
-## Market-Implied Expectations
-
-The market-implied expectations module lives in `src/analysis/market_implied_expectations.py` and currently supports:
-
-- reverse-solving the annual free cash flow growth rate implied by the current share price in the simplified DCF model
-- comparing current price against Bear/Base/Bull valuation scenarios
-- dashboard and report summaries that separate model assumptions from market-implied outputs
-
-This is not a prediction. It answers: "what growth rate would make the current price approximately fit these DCF assumptions?"
+Use a descriptive `SEC_USER_AGENT` if you download SEC filings.
 
 ## Data Sources
 
-The MVP is designed to run without paid APIs. It uses public data sources such as:
+The app may use:
 
-- Yahoo Finance data through `yfinance`
-- SEC EDGAR APIs for future official filing and company facts support
-- SEC EDGAR filing metadata and filing primary documents
+- Yahoo Finance through `yfinance`
+- SEC EDGAR for filings
+- Alpha Vantage for optional news or transcript features
+- local uploaded files for transcripts or research reports
 
-Network data may be incomplete, delayed, unavailable, or shaped differently across companies.
+Market and financial data can be delayed, incomplete, missing, or temporarily unavailable.
 
-## MVP Limitations
+## Common Issues
 
-- yfinance may return empty financial statements or temporary network errors.
-- Price data is cached to `data/raw` and financial statements are cached to `data/processed` when available.
-- P/E, P/S, and DCF valuation assumptions are user-controlled scenario inputs, not predictions.
-- Peer comparison uses available public data and may show `N/A` when financial data is missing.
-- embedding-based filing RAG, richer peer selection, and PDF export are planned future extensions.
+### The App Cannot Find A Ticker
+
+Try:
+
+- checking the ticker spelling
+- using the exchange suffix, such as `.L`, `.HK`, or `.TO`
+- refreshing later if Yahoo Finance is temporarily unavailable
+
+### Portfolio Percentages Do Not Calculate
+
+The asset percentages must add up to `100%`.
+
+Use `Auto Fill %` if you want the app to split the allocation evenly.
+
+### Streamlit Shows An Old Error
+
+Refresh the browser page. If the error remains, stop and restart the app:
+
+```bash
+./run_app.sh
+```
 
 ## Disclaimer
 
-This project is for educational and research purposes only. It does not provide financial advice, investment recommendations, or trading signals. The analysis is based on public data and model assumptions, which may be incomplete or inaccurate.
+This project is for educational and research purposes only. It does not provide financial advice, investment recommendations, or trading signals. The analysis is based on public data and user assumptions, which may be incomplete or inaccurate.
